@@ -786,7 +786,7 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
     <div
       ref={containerRef}
       className="absolute inset-0"
-      style={{ background: "#E6E6E6", position: "relative" }}
+      style={{ background: "#E6E6E6" }}
     >
       <Canvas
         frameloop="demand"             /* only renders on invalidate() */
