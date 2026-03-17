@@ -549,10 +549,24 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
     typeof window !== "undefined" ? window.innerHeight : 1080
   );
   useEffect(() => {
-    const onResize = () => setScreenH(window.innerHeight);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
+    if (mobileMode && containerRef.current) {
+      // On mobile the canvas is only a fraction of the window — size books
+      // against the actual canvas element height so they fill the space properly.
+      const el = containerRef.current;
+      const ro = new ResizeObserver(entries => {
+        const h = entries[0]?.contentRect.height;
+        if (h && h > 0) setScreenH(h);
+      });
+      ro.observe(el);
+      const initial = el.clientHeight;
+      if (initial > 0) setScreenH(initial);
+      return () => ro.disconnect();
+    } else {
+      const onResize = () => setScreenH(window.innerHeight);
+      window.addEventListener("resize", onResize);
+      return () => window.removeEventListener("resize", onResize);
+    }
+  }, [mobileMode]);
 
   // Keep selectedRef in sync so the wheel closure can read without stale state
   useEffect(() => { selectedRef.current = selectedBookId; }, [selectedBookId]);
@@ -563,8 +577,9 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
     const results: BookLayout[] = [];
     let cursor = 0;
 
-    // Mobile books are 1.7× taller so they fill the smaller canvas area visibly
-    const MOBILE_SCALE = mobileMode ? 1.7 : 1.0;
+    // Mobile books fill ~65% of the canvas height (screenH is now the canvas
+    // element height on mobile, not window.innerHeight).
+    const MOBILE_SCALE = mobileMode ? 2.8 : 1.0;
     const dims = filteredBooks.map(book => {
       const h = screenH * heightVH(book.title) * SCALE * MOBILE_SCALE;
       return { h, w: h * COVER_ASPECT };
@@ -574,7 +589,7 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
     // Projected width of an average book at ANGLE_DEG (accounting for slab depth)
     const projected  = avgW * Math.cos(ANGLE_RAD) + SLAB_DEPTH * Math.sin(ANGLE_RAD);
     // Mobile uses wider exposure so fingertips can distinguish individual books
-    const EXPOSE_VAL = mobileMode ? 0.58 : EXPOSE;
+    const EXPOSE_VAL = mobileMode ? 0.62 : EXPOSE;
     const stride     = projected * EXPOSE_VAL;
 
     const n = filteredBooks.length;
