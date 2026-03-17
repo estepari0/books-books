@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useStore } from "@/store";
 import { ShelfView }  from "./ShelfView";
 import { BookOverlay } from "./BookOverlay";
+import { DataView }   from "./DataView";
 import { GENRE_COLORS } from "@/lib/genreColor";
 
 const GENRES       = Object.keys(GENRE_COLORS);
@@ -442,12 +443,10 @@ export function MobileLayout() {
       {/* ── FULL INDEX LIST ──────────────────────────────────────────────── */}
       {activeView === "index" && <MobileIndexList />}
 
-      {/* ── DATA PLACEHOLDER ─────────────────────────────────────────────── */}
+      {/* ── DATA VIZ ─────────────────────────────────────────────────────── */}
       {activeView === "data" && (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <span style={{ ...MONO, fontSize: 10, color: "#141412", opacity: 0.22, letterSpacing: "0.12em" }}>
-            DATA VIEW — COMING SOON
-          </span>
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative" }}>
+          <DataView />
         </div>
       )}
 
