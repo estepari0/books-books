@@ -575,7 +575,7 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
     // individual books vary ±(MAX_VH−MIN_VH)/2 / AVG_VH ≈ ±20% around that.
     const VP_H_WU  = 2 * Math.tan((CAM_FOV / 2) * Math.PI / 180) * CAM_Z; // ≈ 2.052
     const AVG_VH   = (MIN_VH + MAX_VH) / 2; // ≈ 0.2455
-    const TARGET_FILL = mobileMode ? 0.82 : 0.65; // mobile: fill most of canvas; desktop: 65%
+    const TARGET_FILL = mobileMode ? 0.41 : 0.65; // mobile: ~41% canvas height (÷2); desktop: 65%
 
     const dims = filteredBooks.map(book => {
       const h = mobileMode
