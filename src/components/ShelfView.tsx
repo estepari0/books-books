@@ -489,7 +489,9 @@ function ShelfScene({
   });
 
   const xStart  = -(viewport.width / 2) + viewport.width * 0.025;
-  const yBottom = -(viewport.height / 2) + viewport.height * 0.07;
+  // Mobile: anchor books to the canvas bottom with ~4svh of padding (4% viewport height).
+  // Desktop: keep original 7% offset from bottom.
+  const yBottom = -(viewport.height / 2) + viewport.height * (mobileMode ? 0.04 : 0.07);
   const n       = layouts.length;
 
   return (
@@ -573,7 +575,7 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
     // individual books vary ±(MAX_VH−MIN_VH)/2 / AVG_VH ≈ ±20% around that.
     const VP_H_WU  = 2 * Math.tan((CAM_FOV / 2) * Math.PI / 180) * CAM_Z; // ≈ 2.052
     const AVG_VH   = (MIN_VH + MAX_VH) / 2; // ≈ 0.2455
-    const TARGET_FILL = 0.65; // fraction of canvas height
+    const TARGET_FILL = mobileMode ? 0.82 : 0.65; // mobile: fill most of canvas; desktop: 65%
 
     const dims = filteredBooks.map(book => {
       const h = mobileMode
