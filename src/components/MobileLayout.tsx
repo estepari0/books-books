@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useStore } from "@/store";
 import { ShelfView }  from "./ShelfView";
 import { BookOverlay } from "./BookOverlay";
@@ -41,13 +41,51 @@ function BBLogoMini() {
   );
 }
 
+// ── Mini arrow icons for genre strip scroll ────────────────────────────────────
+function ArrowLeft() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+      <line x1="12" y1="8" x2="4.5" y2="8" stroke="#e9eae5" strokeWidth="1" strokeLinecap="round"/>
+      <polyline points="8,5 4.5,8 8,11" fill="none" stroke="#e9eae5" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
+function ArrowRight() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+      <line x1="4" y1="8" x2="11.5" y2="8" stroke="#e9eae5" strokeWidth="1" strokeLinecap="round"/>
+      <polyline points="8,5 11.5,8 8,11" fill="none" stroke="#e9eae5" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
+// Plus — list is collapsed
+function PlusIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+      <line x1="8" y1="4" x2="8" y2="12" stroke="#e9eae5" strokeWidth="1" strokeLinecap="round"/>
+      <line x1="4" y1="8" x2="12" y2="8" stroke="#e9eae5" strokeWidth="1" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
+// Minus — list is visible
+function MinusIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+      <line x1="4" y1="8" x2="12" y2="8" stroke="#e9eae5" strokeWidth="1" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
 // ── Full-screen scrollable index list for mobile ───────────────────────────────
 function MobileIndexList() {
   const filteredBooks     = useStore(s => s.filteredBooks);
   const setSelectedBookId = useStore(s => s.setSelectedBookId);
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", background: "#d9d9d9" }}>
+    <div style={{ flex: 1, overflowY: "auto", background: "#d9d9d9", WebkitOverflowScrolling: "touch" } as React.CSSProperties}>
 
       {/* Sticky column headers */}
       <div style={{
@@ -55,7 +93,7 @@ function MobileIndexList() {
         gridTemplateColumns: "1fr 10px clamp(80px, 28vw, 140px) 10px 42px",
         alignItems: "center",
         padding: "0 14px",
-        height: 32,
+        height: 34,
         background: "#c8c8c8",
         position: "sticky", top: 0, zIndex: 1,
         borderBottom: "0.5px solid #14141222",
@@ -74,17 +112,21 @@ function MobileIndexList() {
       {filteredBooks.map(book => (
         <div
           key={book.id}
+          role="button"
+          tabIndex={0}
           style={{
             display: "grid",
             gridTemplateColumns: "1fr 10px clamp(80px, 28vw, 140px) 10px 42px",
             alignItems: "center",
             padding: "0 14px",
-            height: 44,
+            height: 48,
             borderTop: "0.5px solid #14141218",
             cursor: "pointer",
             WebkitTapHighlightColor: "transparent",
+            outline: "none",
           }}
           onClick={() => setSelectedBookId(book.id)}
+          onKeyDown={e => e.key === "Enter" && setSelectedBookId(book.id)}
         >
           <span style={{ ...SERIF, fontSize: 13, color: "#141412", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {book.title}
@@ -110,9 +152,16 @@ export function MobileLayout() {
   const filteredBooks     = useStore(s => s.filteredBooks);
   const booksLength       = useStore(s => s.books.length);
   const shelfScrollIndex  = useStore(s => s.shelfScrollIndex);
+  const selectedBookId    = useStore(s => s.selectedBookId);
   const setSelectedBookId = useStore(s => s.setSelectedBookId);
   const filters           = useStore(s => s.filters);
   const setFilter         = useStore(s => s.setFilter);
+
+  // Genre strip ref for arrow-scroll
+  const filterRowRef = useRef<HTMLDivElement>(null);
+
+  // Whether compact book list is user-minimized
+  const [listMinimized, setListMinimized] = useState(false);
 
   // Debounce list updates — same pattern as DataPanel compact view
   const [stableIdx, setStableIdx] = useState(shelfScrollIndex);
@@ -129,7 +178,7 @@ export function MobileLayout() {
     )
   ), [stableIdx, filteredBooks.length]);
 
-  const windowedBooks = filteredBooks.slice(windowStart, windowStart + MOBILE_ROWS);
+  const windowedBooks  = filteredBooks.slice(windowStart, windowStart + MOBILE_ROWS);
   const anyGenreActive = filters.genre.length > 0;
 
   const toggleGenre = useCallback((genre: string) => {
@@ -142,6 +191,16 @@ export function MobileLayout() {
     );
   }, [filters.genre, setFilter]);
 
+  // The compact list is hidden when:
+  //  • user explicitly minimized it, OR
+  //  • a book is selected (give canvas full height for the 3D cover)
+  const showList = activeView === "shelf" && !listMinimized && !selectedBookId;
+
+  // Live position counter for shelf view
+  const displayIndex = filteredBooks.length > 0 ? stableIdx + 1 : 0;
+
+  const EASE = "cubic-bezier(0.4,0,0.2,1)";
+
   return (
     <div style={{
       position: "fixed",
@@ -153,75 +212,127 @@ export function MobileLayout() {
       background: "#E6E6E6",
     }}>
 
-      {/* ── NAVIGATION HEADER ─────────────────────────────────────────── */}
-      <div style={{ flexShrink: 0, background: "#141412", display: "flex", flexDirection: "column" }}>
+      {/* ── TOP NAV — tabs + logo + counter ─────────────────────────────── */}
+      {/* Slightly darker than the genre strip so the two rows read as distinct */}
+      <div style={{
+        flexShrink: 0,
+        height: "clamp(44px, 7svh, 58px)",
+        background: "#141412",
+        display: "flex",
+        alignItems: "center",
+        padding: "0 14px",
+        gap: 8,
+        userSelect: "none",
+        borderBottom: "0.5px solid #ffffff0a",
+      }}>
+        <BBLogoMini />
 
-        {/* Top row: logo · counter · divider · view tabs */}
-        <div style={{
-          height: "clamp(44px, 7svh, 58px)",
-          display: "flex",
-          alignItems: "center",
-          padding: "0 14px",
-          gap: 8,
-          userSelect: "none",
+        {/* Position counter — shows current book index in shelf view,
+            total count in index view */}
+        <span style={{
+          ...MONO,
+          fontSize: 10,
+          letterSpacing: "0.04em",
+          color: "#e9eae5",
+          opacity: 0.5,
+          flexShrink: 0,
+          minWidth: 36,
         }}>
-          <BBLogoMini />
+          {activeView === "shelf"
+            ? `${displayIndex}/${filteredBooks.length}`
+            : `${filteredBooks.length}/${booksLength}`}
+        </span>
 
-          {/* Filtered / total counter */}
-          <span style={{ ...MONO, color: "#e9eae5", opacity: 0.35, fontSize: 10, letterSpacing: "0.04em", flexShrink: 0 }}>
-            {filteredBooks.length}/{booksLength}
-          </span>
+        <div style={{ width: 1, height: 14, background: "#e9eae525", flexShrink: 0, marginLeft: 2 }} />
 
-          <div style={{ width: 1, height: 14, background: "#e9eae525", flexShrink: 0, marginLeft: 2 }} />
+        {/* View tabs */}
+        {(["shelf", "index", "data"] as const).map(view => {
+          const labels: Record<string, string> = { shelf: "SHELF", index: "INDEX", data: "DATA" };
+          const active = activeView === view;
+          return (
+            <button
+              key={view}
+              onClick={() => setActiveView(view)}
+              style={{
+                ...MONO,
+                fontSize: 10,
+                letterSpacing: "0.08em",
+                color: "#e9eae5",
+                background: "none",
+                border: active ? "1px solid #e9eae530" : "1px solid transparent",
+                borderRadius: 6,
+                padding: "4px 8px",
+                cursor: "pointer",
+                opacity: active ? 1 : 0.4,
+                flexShrink: 0,
+                transition: "opacity 0.15s, border-color 0.15s",
+                WebkitTapHighlightColor: "transparent",
+                outline: "none",
+              }}
+            >
+              {labels[view]}
+            </button>
+          );
+        })}
+      </div>
 
-          {/* View tabs */}
-          {(["shelf", "index", "data"] as const).map(view => {
-            const labels: Record<string, string> = { shelf: "SHELF", index: "INDEX", data: "DATA" };
-            const active = activeView === view;
-            return (
-              <button
-                key={view}
-                onClick={() => setActiveView(view)}
-                style={{
-                  ...MONO,
-                  fontSize: 10,
-                  letterSpacing: "0.08em",
-                  color: "#e9eae5",
-                  background: "none",
-                  border: "none",
-                  padding: "5px 8px",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  opacity: active ? 1 : 0.4,
-                  flexShrink: 0,
-                  WebkitTapHighlightColor: "transparent",
-                  outline: "none",
-                }}
-              >
-                {labels[view]}
-              </button>
-            );
-          })}
-        </div>
+      {/* ── GENRE FILTER STRIP — arrows + scrollable chips + minimize ─── */}
+      {/* Slightly lighter than nav to create a readable two-tier header */}
+      <div style={{
+        flexShrink: 0,
+        height: "clamp(30px, 4svh, 38px)",
+        background: "#1e1e1c",
+        display: "flex",
+        alignItems: "center",
+        borderBottom: "0.5px solid #ffffff08",
+        userSelect: "none",
+      }}>
+        {/* Left arrow */}
+        <button
+          onClick={() => filterRowRef.current?.scrollBy({ left: -120, behavior: "smooth" })}
+          style={{
+            flexShrink: 0, display: "flex", alignItems: "center",
+            padding: "0 6px 0 10px", background: "none", border: "none",
+            cursor: "pointer", opacity: 0.5,
+            WebkitTapHighlightColor: "transparent",
+          }}
+        >
+          <ArrowLeft />
+        </button>
 
-        {/* Genre filter strip — horizontal scroll */}
-        <div style={{
-          height: "clamp(30px, 4svh, 38px)",
-          display: "flex",
-          alignItems: "center",
-          overflowX: "auto",
-          scrollbarWidth: "none",
-          gap: 0,
-          padding: "0 14px",
-          borderTop: "0.5px solid #e9eae510",
-        }}>
+        {/* Right arrow */}
+        <button
+          onClick={() => filterRowRef.current?.scrollBy({ left: 120, behavior: "smooth" })}
+          style={{
+            flexShrink: 0, display: "flex", alignItems: "center",
+            padding: "0 6px 0 0", background: "none", border: "none",
+            cursor: "pointer", opacity: 0.5,
+            WebkitTapHighlightColor: "transparent",
+          }}
+        >
+          <ArrowRight />
+        </button>
+
+        {/* Scrollable genre chips */}
+        <div
+          ref={filterRowRef}
+          style={{
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            overflowX: "auto",
+            scrollbarWidth: "none",
+            gap: 0,
+            padding: "2px 0",
+          }}
+        >
           {GENRES.map((genre, i) => {
             const active = filters.genre.includes(genre);
             const dimmed = anyGenreActive && !active;
             return (
               <span key={genre} style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
                 {i > 0 && (
-                  <span style={{ ...MONO, color: "#e9eae5", opacity: 0.2, lineHeight: 0.9, padding: "0 10px" }}>|</span>
+                  <span style={{ ...MONO, color: "#e9eae5", opacity: 0.18, lineHeight: 0.9, padding: "0 8px" }}>|</span>
                 )}
                 <button
                   onClick={() => toggleGenre(genre)}
@@ -233,12 +344,13 @@ export function MobileLayout() {
                     background: "none",
                     border: "none",
                     cursor: "pointer",
-                    opacity: dimmed ? 0.3 : 1,
+                    opacity: dimmed ? 0.28 : active ? 1 : 0.7,
                     textDecoration: dimmed ? "line-through" : "none",
-                    padding: "6px 0",
+                    padding: "5px 0",
                     whiteSpace: "nowrap",
                     flexShrink: 0,
                     WebkitTapHighlightColor: "transparent",
+                    outline: "none",
                   }}
                 >
                   {genre.toUpperCase()}
@@ -247,20 +359,41 @@ export function MobileLayout() {
             );
           })}
         </div>
+
+        {/* Minimize/expand the compact list — only in shelf view */}
+        {activeView === "shelf" && !selectedBookId && (
+          <button
+            onClick={() => setListMinimized(m => !m)}
+            style={{
+              flexShrink: 0, display: "flex", alignItems: "center",
+              padding: "0 10px", background: "none", border: "none",
+              cursor: "pointer",
+              opacity: listMinimized ? 1 : 0.5,
+              WebkitTapHighlightColor: "transparent",
+            }}
+          >
+            {listMinimized ? <PlusIcon /> : <MinusIcon />}
+          </button>
+        )}
       </div>
 
-      {/* ── COMPACT DEPARTURES BOARD (shelf view only) ────────────────── */}
-      {activeView === "shelf" && (
+      {/* ── COMPACT DEPARTURES BOARD ─────────────────────────────────────
+          Hidden when minimized or when a book is selected (canvas gets full
+          height so the 3D cover isn't tiny).                              ── */}
+      {showList && (
         <div style={{
           flexShrink: 0,
           background: "#d9d9d9",
           borderBottom: "0.5px solid #14141215",
+          transition: `opacity 0.18s ${EASE}`,
         }}>
           {Array.from({ length: MOBILE_ROWS }, (_, i) => {
             const book = windowedBooks[i] ?? null;
             return (
               <div
                 key={i}
+                role={book ? "button" : undefined}
+                tabIndex={book ? 0 : undefined}
                 style={{
                   height: "clamp(26px, 4svh, 38px)",
                   display: "grid",
@@ -270,8 +403,10 @@ export function MobileLayout() {
                   borderTop: i === 0 ? "none" : "0.5px solid #14141215",
                   cursor: book ? "pointer" : "default",
                   WebkitTapHighlightColor: "transparent",
+                  outline: "none",
                 }}
                 onClick={() => book && setSelectedBookId(book.id)}
+                onKeyDown={e => e.key === "Enter" && book && setSelectedBookId(book.id)}
               >
                 <span style={{ ...SERIF, fontSize: 13, color: "#141412", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {book?.title ?? ""}
@@ -290,26 +425,30 @@ export function MobileLayout() {
         </div>
       )}
 
-      {/* ── 3-D SHELF CANVAS — touch-draggable ────────────────────────── */}
+      {/* ── 3-D SHELF CANVAS ─────────────────────────────────────────────
+          flex:1 means it expands to fill all remaining viewport height.
+          When a book is selected the compact list hides, giving the canvas
+          extra height so the 3D cover isn't tiny.                        ── */}
       {activeView === "shelf" && (
         <div style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
           <ShelfView mobileMode />
         </div>
       )}
 
-      {/* ── FULL INDEX LIST ───────────────────────────────────────────── */}
+      {/* ── FULL INDEX LIST ──────────────────────────────────────────────── */}
       {activeView === "index" && <MobileIndexList />}
 
-      {/* ── DATA PLACEHOLDER ──────────────────────────────────────────── */}
+      {/* ── DATA PLACEHOLDER ─────────────────────────────────────────────── */}
       {activeView === "data" && (
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <span style={{ ...MONO, fontSize: 10, color: "#141412", opacity: 0.25, letterSpacing: "0.12em" }}>
+          <span style={{ ...MONO, fontSize: 10, color: "#141412", opacity: 0.22, letterSpacing: "0.12em" }}>
             DATA VIEW — COMING SOON
           </span>
         </div>
       )}
 
-      {/* BookOverlay — same component as desktop, works in both views */}
+      {/* BookOverlay — position:fixed so it breaks out of the flex stack.
+          zIndex 9999 ensures it's always on top of the canvas.           */}
       <BookOverlay />
     </div>
   );

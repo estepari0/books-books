@@ -280,7 +280,7 @@ const LIFT   = 0.35; // world units up
 // lower factor (lag behind).  The cascade creates the wave-organism feel —
 // books settle left-to-right like a single ripple of energy.
 function BookMesh({
-  layout, yBottom, xStart, scrollX, stride, index, totalBooks, hoveredId, selectedId, onClickBook, onHoverBook,
+  layout, yBottom, xStart, scrollX, stride, index, totalBooks, hoveredId, selectedId, onClickBook, onHoverBook, mobileMode,
 }: {
   layout: BookLayout;
   yBottom: number;
@@ -293,6 +293,7 @@ function BookMesh({
   selectedId: string | null;
   onClickBook: (id: string) => void;
   onHoverBook: (id: string | null) => void;
+  mobileMode: boolean;
 }) {
   const { gl, invalidate, viewport } = useThree();
   const maxAniso       = useMemo(() => gl.capabilities.getMaxAnisotropy(), [gl]);
@@ -402,16 +403,17 @@ function BookMesh({
 
       const normalX  = xStart + layout.x - shift - scrollPos.current;
       const normalY  = y + lift;
-      // Selected book settles at (0, slightlyAboveCenter)
-      const selectedY = viewport.height * 0.10;
+      // Selected book settles above center — pushed higher on mobile so the
+      // BookOverlay panel at the bottom doesn't cover the cover art.
+      const selectedY = viewport.height * (mobileMode ? 0.22 : 0.10);
 
       bookRef.current.position.x = normalX * (1 - s); // selected → X=0 (full-viewport center)
       bookRef.current.position.y = normalY * (1 - s) + selectedY * s;
       bookRef.current.position.z = 0;
       bookRef.current.rotation.x = 0;
       bookRef.current.rotation.y = layout.rotY * (1 - s); // lerps to frontal
-      // Dismissed books shrink to 0; selected book scales up 10%
-      bookRef.current.scale.setScalar(d * (1 + s * 0.10));
+      // Dismissed books shrink to 0; selected book scales up more on mobile
+      bookRef.current.scale.setScalar(d * (1 + s * (mobileMode ? 0.30 : 0.10)));
       invalidate();
     }
   });
@@ -457,7 +459,7 @@ function BookMesh({
 
 // ─── 3-D Scene ────────────────────────────────────────────────────────────────
 function ShelfScene({
-  layouts, stride, scrollX, invalidateRef, hoveredId, selectedId, onClickBook, onHoverBook,
+  layouts, stride, scrollX, invalidateRef, hoveredId, selectedId, onClickBook, onHoverBook, mobileMode,
 }: {
   layouts: BookLayout[];
   stride: number;
@@ -467,6 +469,7 @@ function ShelfScene({
   selectedId: string | null;
   onClickBook: (id: string) => void;
   onHoverBook: (id: string | null) => void;
+  mobileMode: boolean;
 }) {
   const { viewport, invalidate } = useThree();
 
@@ -506,6 +509,7 @@ function ShelfScene({
           selectedId={selectedId}
           onClickBook={onClickBook}
           onHoverBook={onHoverBook}
+          mobileMode={mobileMode}
         />
       ))}
     </>
@@ -559,8 +563,10 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
     const results: BookLayout[] = [];
     let cursor = 0;
 
+    // Mobile books are 1.7× taller so they fill the smaller canvas area visibly
+    const MOBILE_SCALE = mobileMode ? 1.7 : 1.0;
     const dims = filteredBooks.map(book => {
-      const h = screenH * heightVH(book.title) * SCALE;
+      const h = screenH * heightVH(book.title) * SCALE * MOBILE_SCALE;
       return { h, w: h * COVER_ASPECT };
     });
 
@@ -790,6 +796,7 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
           selectedId={selectedBookId}
           onClickBook={handleClick}
           onHoverBook={mobileMode ? () => {} : handleHover}
+          mobileMode={mobileMode}
         />
       </Canvas>
     </div>

@@ -44,17 +44,21 @@ export function BookOverlay() {
   }, [selectedBookId]);
 
   useEffect(() => {
-    if (!overlayRef.current || !contentRef.current) return;
-    if (selectedBookId) {
+    if (!selectedBookId) return;
+    // rAF ensures refs are attached after React commits the mount —
+    // critical on mobile where the paint cycle can lag the effect.
+    const raf = requestAnimationFrame(() => {
+      if (!overlayRef.current || !contentRef.current) return;
       gsap.fromTo(overlayRef.current,
         { opacity: 0 },
-        { opacity: 1, duration: 0.35, ease: "power2.out", delay: 0.2 }
+        { opacity: 1, duration: 0.35, ease: "power2.out", delay: 0.1 }
       );
       gsap.fromTo(contentRef.current,
         { y: 14, opacity: 0 },
-        { y: 0, opacity: 1, duration: 0.38, ease: "power2.out", delay: 0.36 }
+        { y: 0, opacity: 1, duration: 0.38, ease: "power2.out", delay: 0.22 }
       );
-    }
+    });
+    return () => cancelAnimationFrame(raf);
   }, [selectedBookId]);
 
   const handleClose = () => {
@@ -81,9 +85,12 @@ export function BookOverlay() {
     <div
       ref={overlayRef}
       style={{
-        position: "fixed", inset: 0, zIndex: 40,
+        position: "fixed", inset: 0, zIndex: 9999,
         background: "transparent",
         opacity: 0,
+        // CSS transition as safety net — GSAP overrides this when it runs,
+        // but on slow mobile frames the overlay won't stay invisible forever.
+        transition: "opacity 0.35s ease",
       }}
     >
       {/* click anywhere to dismiss */}
