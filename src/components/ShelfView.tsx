@@ -549,23 +549,11 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
     typeof window !== "undefined" ? window.innerHeight : 1080
   );
   useEffect(() => {
-    if (mobileMode && containerRef.current) {
-      // On mobile the canvas is only a fraction of the window — size books
-      // against the actual canvas element height so they fill the space properly.
-      const el = containerRef.current;
-      const ro = new ResizeObserver(entries => {
-        const h = entries[0]?.contentRect.height;
-        if (h && h > 0) setScreenH(h);
-      });
-      ro.observe(el);
-      const initial = el.clientHeight;
-      if (initial > 0) setScreenH(initial);
-      return () => ro.disconnect();
-    } else {
-      const onResize = () => setScreenH(window.innerHeight);
-      window.addEventListener("resize", onResize);
-      return () => window.removeEventListener("resize", onResize);
-    }
+    // Desktop only — mobile doesn't use screenH for book sizing
+    if (mobileMode) return;
+    const onResize = () => setScreenH(window.innerHeight);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, [mobileMode]);
 
   // Keep selectedRef in sync so the wheel closure can read without stale state
@@ -577,11 +565,20 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
     const results: BookLayout[] = [];
     let cursor = 0;
 
-    // Mobile books fill ~65% of the canvas height (screenH is now the canvas
-    // element height on mobile, not window.innerHeight).
-    const MOBILE_SCALE = mobileMode ? 2.8 : 1.0;
+    // Mobile: size books directly in world units so they always fill ~65% of
+    // the canvas height — independent of window.innerHeight or canvas pixel size.
+    //   VP_H_WU  = camera-based viewport height in world units (constant).
+    //   AVG_VH   = midpoint of the title-hash height range.
+    // Normalising by AVG_VH makes the average book exactly TARGET_FILL tall;
+    // individual books vary ±(MAX_VH−MIN_VH)/2 / AVG_VH ≈ ±20% around that.
+    const VP_H_WU  = 2 * Math.tan((CAM_FOV / 2) * Math.PI / 180) * CAM_Z; // ≈ 2.052
+    const AVG_VH   = (MIN_VH + MAX_VH) / 2; // ≈ 0.2455
+    const TARGET_FILL = 0.65; // fraction of canvas height
+
     const dims = filteredBooks.map(book => {
-      const h = screenH * heightVH(book.title) * SCALE * MOBILE_SCALE;
+      const h = mobileMode
+        ? VP_H_WU * TARGET_FILL * (heightVH(book.title) / AVG_VH)
+        : screenH * heightVH(book.title) * SCALE;
       return { h, w: h * COVER_ASPECT };
     });
 
