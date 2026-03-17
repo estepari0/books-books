@@ -1,26 +1,108 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+  --background: #e6e6e6;
+  --foreground: #141412;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --panel-bg: rgba(255, 255, 255, 0.75);
+  --panel-border: rgba(230, 230, 230, 0.8);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --accent: #d97757;
+
+  /* Design tokens — from Figma */
+  --dark:  #141412;
+  --light: #e9eae5;
+  --muted: #838383;
+
+  /* Genre Palette */
+  --genre-fiction: #e4afa4;
+  --genre-scifi: #b5c7d3;
+  --genre-historical: #d4c2a5;
+  --genre-poetry: #e6cce3;
+  --genre-essay: #c5d4b5;
+  --genre-memoir: #dbbfbe;
+  --genre-philosophy: #d9d0e2;
+  --genre-history: #ceb7a3;
+  --genre-indigenous: #c7d1ab;
+  --genre-anthro: #e0cca9;
+  --genre-science: #aecfcc;
+  --genre-design: #d9d9d9;
+  --genre-journalism: #e8cbaa;
 }
 
 body {
-  background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--background);
+  font-family: var(--font-sans);
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+
+h1, h2, h3, h4, h5, h6, .font-serif {
+  font-family: var(--font-serif);
+}
+
+.glass-panel {
+  background: var(--panel-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--panel-border);
+}
+
+/* Base resets */
+* {
+  box-sizing: border-box;
+}
+
+ul, ol {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+}
+
+/* ── Custom scrollbars — thin, rounded, adapted to design system ── */
+
+/* Webkit (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(20, 20, 18, 0.18);
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(20, 20, 18, 0.38);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(20, 20, 18, 0.18) transparent;
 }
