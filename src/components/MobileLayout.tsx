@@ -430,7 +430,11 @@ export function MobileLayout() {
           When a book is selected the compact list hides, giving the canvas
           extra height so the 3D cover isn't tiny.                        ── */}
       {activeView === "shelf" && (
-        <div style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
+        // position:relative is critical — ShelfView's inner canvas container uses
+        // `absolute inset-0` and without a positioned ancestor it would stretch to
+        // the MobileLayout `position:fixed` root, making the canvas full-screen and
+        // breaking book sizing + bottom-alignment.
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative" }}>
           <ShelfView mobileMode />
         </div>
       )}
