@@ -513,10 +513,17 @@ function ShelfScene({
 }
 
 // ─── ShelfView (host component) ───────────────────────────────────────────────
-export function ShelfView() {
+// mobileMode: enables touch scroll, widens book spacing, disables mouse edge-scroll.
+export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
   const containerRef    = useRef<HTMLDivElement>(null);
   const edgeRaf         = useRef<number | null>(null);
   const mouseX          = useRef(-1);
+  // Touch scroll refs (mobile only)
+  const touchVelocity   = useRef(0);
+  const touchLastX      = useRef(0);
+  const touchLastTime   = useRef(0);
+  const touchStartX     = useRef(0);
+  const touchIsDrag     = useRef(false);
   // pos = rendered position, target = where we're heading, max = clamp ceiling
   // velocity = smoothed scroll speed (|px/ms|), drives gap compression
   const scrollState     = useRef({ pos: 0, target: 0, max: 0, velocity: 0 });
@@ -559,8 +566,10 @@ export function ShelfView() {
 
     const avgW = dims.length ? dims.reduce((s, d) => s + d.w, 0) / dims.length : 0.5;
     // Projected width of an average book at ANGLE_DEG (accounting for slab depth)
-    const projected = avgW * Math.cos(ANGLE_RAD) + SLAB_DEPTH * Math.sin(ANGLE_RAD);
-    const stride    = projected * EXPOSE;
+    const projected  = avgW * Math.cos(ANGLE_RAD) + SLAB_DEPTH * Math.sin(ANGLE_RAD);
+    // Mobile uses wider exposure so fingertips can distinguish individual books
+    const EXPOSE_VAL = mobileMode ? 0.58 : EXPOSE;
+    const stride     = projected * EXPOSE_VAL;
 
     const n = filteredBooks.length;
     filteredBooks.forEach((book, i) => {
@@ -594,7 +603,7 @@ export function ShelfView() {
       : 0;
     scrollState.current.max = max;
     return { layouts: results, maxScroll: max, stride };
-  }, [filteredBooks, screenH]);
+  }, [filteredBooks, screenH, mobileMode]);
 
   // Nudge target — useFrame lerps pos toward it.
   // Also publishes the center-book index immediately after target is written —
@@ -613,8 +622,9 @@ export function ShelfView() {
     }
   }, [filteredBooks.length, setShelfScrollIndex]);
 
-  // Wheel + throw on lift-off
+  // Wheel + throw on lift-off (desktop only — mobile uses touch below)
   useEffect(() => {
+    if (mobileMode) return;
     const el = containerRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
@@ -649,8 +659,9 @@ export function ShelfView() {
     };
   }, [nudge]);
 
-  // Edge-hover auto-scroll
+  // Edge-hover auto-scroll (desktop only — mobile has no persistent pointer)
   useEffect(() => {
+    if (mobileMode) return;
     const onMove  = (e: MouseEvent) => {
       // Only activate edge scroll when mouse is over the canvas area itself —
       // not over the DataPanel, FilterBar, or any other overlay.
@@ -682,6 +693,72 @@ export function ShelfView() {
     };
   }, [nudge]);
 
+  // Touch scroll (mobile only)
+  // Differentiates tap (< 6px total movement) from drag so R3F's synthetic
+  // onClick still fires on a tap — letting book selection work naturally.
+  useEffect(() => {
+    if (!mobileMode) return;
+    const el = containerRef.current;
+    if (!el) return;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (selectedRef.current) return;
+      touchStartX.current    = e.touches[0].clientX;
+      touchLastX.current     = touchStartX.current;
+      touchLastTime.current  = performance.now();
+      touchVelocity.current  = 0;
+      touchIsDrag.current    = false;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (selectedRef.current) return;
+      const x        = e.touches[0].clientX;
+      const totalDx  = touchStartX.current - x;
+
+      // Commit to drag once horizontal displacement exceeds threshold
+      if (!touchIsDrag.current && Math.abs(totalDx) > 6) {
+        touchIsDrag.current = true;
+      }
+
+      if (touchIsDrag.current) {
+        e.preventDefault(); // stop browser pull-to-refresh / page scroll
+        const moveDx = touchLastX.current - x;
+        const now    = performance.now();
+        const dt     = Math.max(8, now - touchLastTime.current);
+
+        touchVelocity.current = moveDx / dt;
+        touchLastX.current    = x;
+        touchLastTime.current = now;
+
+        // SCALE = 1/300; ×3 maps finger-pixel distance to world-unit nicely
+        nudge(moveDx * SCALE * 3);
+        // Feed velocity into the gap-compression system
+        scrollState.current.velocity = Math.min(Math.abs(touchVelocity.current) * 8, 15);
+        invalidateRef.current?.();
+      }
+    };
+
+    const onTouchEnd = () => {
+      if (touchIsDrag.current) {
+        // Throw: project by measured velocity × coast window
+        const coast = touchVelocity.current * 220 * SCALE * 3;
+        if (Math.abs(coast) > 0.005) nudge(coast);
+      }
+      touchIsDrag.current = false;
+    };
+
+    // passive: true on start so R3F pointer events still fire (tap = click)
+    el.addEventListener("touchstart", onTouchStart, { passive: true  });
+    el.addEventListener("touchmove",  onTouchMove,  { passive: false });
+    el.addEventListener("touchend",   onTouchEnd);
+
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove",  onTouchMove);
+      el.removeEventListener("touchend",   onTouchEnd);
+    };
+  }, [mobileMode, nudge]);
+
   const handleClick = useCallback((id: string) => setSelectedBookId(id), [setSelectedBookId]);
   const handleHover = useCallback((id: string | null) => setHoveredBookId(id), [setHoveredBookId]);
 
@@ -709,10 +786,10 @@ export function ShelfView() {
           stride={stride}
           scrollX={scrollState}
           invalidateRef={invalidateRef}
-          hoveredId={hoveredBookId}
+          hoveredId={mobileMode ? null : hoveredBookId}
           selectedId={selectedBookId}
           onClickBook={handleClick}
-          onHoverBook={handleHover}
+          onHoverBook={mobileMode ? () => {} : handleHover}
         />
       </Canvas>
     </div>

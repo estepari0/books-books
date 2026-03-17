@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { ShelfView }    from "@/components/ShelfView";
 import { IslandPanel }  from "@/components/IslandPanel";
 import { DetailPanel }  from "@/components/DetailPanel";
@@ -8,10 +8,23 @@ import { BookOverlay }  from "@/components/BookOverlay";
 import { FilterBar }   from "@/components/FilterBar";
 import { DataPanel }   from "@/components/DataPanel";
 import { DataView }    from "@/components/DataView";
+import { MobileLayout } from "@/components/MobileLayout";
 import { useStore }    from "@/store";
 
 export default function Home() {
-  const { activeView, isLoading, error, initialize } = useStore();
+  const activeView = useStore(s => s.activeView);
+  const isLoading  = useStore(s => s.isLoading);
+  const error      = useStore(s => s.error);
+  const initialize = useStore(s => s.initialize);
+
+  // Mobile detection — swap entire layout below 768px
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   useEffect(() => {
     initialize();
@@ -39,6 +52,9 @@ export default function Home() {
       </main>
     );
   }
+
+  // Mobile — self-contained layout, data already loaded above
+  if (isMobile) return <MobileLayout />;
 
   return (
     <main className="w-screen h-screen overflow-hidden relative">
