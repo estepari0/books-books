@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/store";
 import gsap from "gsap";
 
@@ -26,12 +26,17 @@ const ROW_ESC    = 24;   // close row
 type Tab = "synopsis" | "quotes";
 
 export function BookOverlay() {
-  const { selectedBookId, setSelectedBookId, books } = useStore();
+  const selectedBookId    = useStore(s => s.selectedBookId);
+  const setSelectedBookId = useStore(s => s.setSelectedBookId);
+  const books             = useStore(s => s.books);
   const overlayRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<Tab>("synopsis");
 
-  const book = books.find(b => b.id === selectedBookId) ?? null;
+  const book = useMemo(
+    () => books.find(b => b.id === selectedBookId) ?? null,
+    [books, selectedBookId],
+  );
 
   // Reset to synopsis whenever a new book opens
   useEffect(() => {

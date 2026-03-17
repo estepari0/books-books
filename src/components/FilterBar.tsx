@@ -102,7 +102,10 @@ function DataIcon() {
 }
 
 export function FilterBar() {
-  const { activeView, setActiveView, shelfScrollIndex, books } = useStore();
+  const activeView       = useStore(s => s.activeView);
+  const setActiveView    = useStore(s => s.setActiveView);
+  const shelfScrollIndex = useStore(s => s.shelfScrollIndex);
+  const booksLength      = useStore(s => s.books.length);
 
   const views = [
     { id: 'shelf' as const,  label: 'SHELF',      icon: <ShelfIcon /> },
@@ -125,7 +128,7 @@ export function FilterBar() {
       <BBLogo />
 
       {/* Counter badge — hangs from top, right after BB logo */}
-      <CounterBadge index={shelfScrollIndex} total={books.length} />
+      <CounterBadge index={shelfScrollIndex} total={booksLength} />
 
       {/* Hairline divider */}
       <div style={{ width: 1, height: 20, background: "#14141230", flexShrink: 0 }} />

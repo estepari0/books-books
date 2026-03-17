@@ -323,7 +323,7 @@ function splitChars(str: string) {
 
 // ── Hovered book row with GSAP per-character animation ───────────────────────
 function HoverRow({ bookId }: { bookId: string | null }) {
-  const { books } = useStore();
+  const books = useStore(s => s.books);
   const [activeBook, setActiveBook] = useState<(typeof books)[0] | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const animRef = useRef<gsap.core.Tween | null>(null);
@@ -534,14 +534,15 @@ function BookList({
 
 // ── Main DataPanel ─────────────────────────────────────────────────────────────
 export function DataPanel() {
-  const {
-    filteredBooks, books,
-    filters, setFilter,
-    hoveredBookId, setHoveredBookId,
-    shelfScrollIndex,
-    activeView, setActiveView,
-    setSelectedBookId,
-  } = useStore();
+  const filteredBooks     = useStore(s => s.filteredBooks);
+  const filters           = useStore(s => s.filters);
+  const setFilter         = useStore(s => s.setFilter);
+  const hoveredBookId     = useStore(s => s.hoveredBookId);
+  const setHoveredBookId  = useStore(s => s.setHoveredBookId);
+  const shelfScrollIndex  = useStore(s => s.shelfScrollIndex);
+  const activeView        = useStore(s => s.activeView);
+  const setActiveView     = useStore(s => s.setActiveView);
+  const setSelectedBookId = useStore(s => s.setSelectedBookId);
 
   const [minimized, setMinimized] = useState(false);
 

@@ -46,8 +46,21 @@ function proxyCover(url?: string) {
 }
 
 // ─── Module-level caches ──────────────────────────────────────────────────────
-const texCache   = new Map<string, THREE.Texture>();
-const colorCache = new Map<string, THREE.Color>();
+const texCache      = new Map<string, THREE.Texture>();
+const colorCache    = new Map<string, THREE.Color>();
+const fallbackCache = new Map<string, THREE.CanvasTexture>();
+
+// Evict the oldest entry when the tex cache hits its ceiling.
+// Map preserves insertion order — first key = oldest entry.
+const TEX_CACHE_MAX = 200;
+function evictTexIfNeeded(): void {
+  if (texCache.size < TEX_CACHE_MAX) return;
+  const firstKey = texCache.keys().next().value as string | undefined;
+  if (!firstKey) return;
+  texCache.get(firstKey)?.dispose();
+  texCache.delete(firstKey);
+  colorCache.delete(firstKey);
+}
 
 // Sample ONLY the outer border ring of pixels from the cover.
 // The spine/edge of the card shows this color, so the extrusion looks like
@@ -170,6 +183,7 @@ function loadRoundedTexture(
     tex.anisotropy      = maxAnisotropy;
     tex.generateMipmaps = true;
 
+    evictTexIfNeeded();
     texCache.set(url, tex);
     coverMat.map = tex;
     coverMat.needsUpdate = true;
@@ -178,7 +192,9 @@ function loadRoundedTexture(
   img.src = url;
 }
 
-// Placeholder texture with rounded corners
+// Placeholder texture with rounded corners — cached by title so filter changes
+// that remount BookMesh components reuse the same GPU texture instead of
+// creating a new canvas + CanvasTexture on every mount.
 function makeFallback(title: string): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = 256; canvas.height = 384;
@@ -204,7 +220,12 @@ function makeFallback(title: string): THREE.CanvasTexture {
   ctx.fillText(line, 128, y);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
+  fallbackCache.set(title, tex);
   return tex;
+}
+
+function getOrMakeFallback(title: string): THREE.CanvasTexture {
+  return fallbackCache.get(title) ?? makeFallback(title);
 }
 
 // ─── PS1-style frosted plastic — per-book, cover-colour derived ───────────────
@@ -292,9 +313,10 @@ function BookMesh({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const glassMat = useMemo(() => makeBookGlass(), []);
 
-  // Cover "print" sitting on front face
+  // Cover "print" sitting on front face — getOrMakeFallback reuses a cached
+  // CanvasTexture so remounts from filter changes don't recreate the canvas.
   const coverMat = useMemo(
-    () => makeCoverMat(makeFallback(layout.title)),
+    () => makeCoverMat(getOrMakeFallback(layout.title)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
@@ -304,6 +326,18 @@ function BookMesh({
     if (!layout.coverUrl) return;
     loadRoundedTexture(layout.coverUrl, coverMat, glassMat, maxAniso, invalidate);
   }, [layout.coverUrl, coverMat, glassMat, maxAniso, invalidate]);
+
+  // Dispose GPU resources on unmount — prevents VRAM leaking as filter results change.
+  // Materials are always safe to dispose (they hold no shared data).
+  // Textures live in shared caches (texCache / fallbackCache) and are intentionally
+  // kept alive — only the LRU eviction path disposes them.
+  useEffect(() => {
+    return () => {
+      glassMat.dispose();
+      coverMat.dispose();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Baseline Y center — stable across frames, defined before useFrame closure
   const y = yBottom + layout.h / 2;
@@ -493,7 +527,12 @@ export function ShelfView() {
   const lastWheelDelta  = useRef(0);
   const lastWheelTime   = useRef(0);
 
-  const { filteredBooks, hoveredBookId, selectedBookId, setHoveredBookId, setSelectedBookId, setShelfScrollIndex } = useStore();
+  const filteredBooks       = useStore(s => s.filteredBooks);
+  const hoveredBookId       = useStore(s => s.hoveredBookId);
+  const selectedBookId      = useStore(s => s.selectedBookId);
+  const setHoveredBookId    = useStore(s => s.setHoveredBookId);
+  const setSelectedBookId   = useStore(s => s.setSelectedBookId);
+  const setShelfScrollIndex = useStore(s => s.setShelfScrollIndex);
 
   const [screenH, setScreenH] = useState(
     typeof window !== "undefined" ? window.innerHeight : 1080

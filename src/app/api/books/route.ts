@@ -5,6 +5,14 @@ const NOTION_API = 'https://api.notion.com/v1';
 const DATABASE_ID = '79ddcf35-ec93-4f94-9ac0-b45aedc44b29';
 const NOTION_VERSION = '2022-06-28';
 
+// ── Server-side in-process cache ──────────────────────────────────────────────
+// Survives across requests in the same Node.js process (production + dev HMR).
+// Avoids re-fetching 200+ Notion pages on every request during cache misses.
+// The CDN Cache-Control header handles edge caching on top of this.
+const SERVER_CACHE_TTL = 3600 * 1000; // 1 hour in ms
+let _cachedBooks: Book[] | null = null;
+let _cacheTime  = 0;
+
 // --- Notion property extractors ---
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -169,8 +177,20 @@ export async function GET() {
   }
 
   try {
+    // Return the in-process cache if it's still fresh
+    const now = Date.now();
+    if (_cachedBooks && now - _cacheTime < SERVER_CACHE_TTL) {
+      return NextResponse.json(_cachedBooks, {
+        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=86400' },
+      });
+    }
+
     const books = await fetchAllBooks(token);
     await fillMissingCovers(books);
+
+    // Populate the in-process cache
+    _cachedBooks = books;
+    _cacheTime   = now;
 
     return NextResponse.json(books, {
       headers: {
