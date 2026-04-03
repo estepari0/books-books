@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import gsap from "gsap";
 import { useStore } from "@/store";
 import { GENRE_COLORS } from "@/lib/genreColor";
@@ -537,6 +537,7 @@ export function DataPanel() {
   const filteredBooks     = useStore(s => s.filteredBooks);
   const filters           = useStore(s => s.filters);
   const setFilter         = useStore(s => s.setFilter);
+  const clearFilters      = useStore(s => s.clearFilters);
   const hoveredBookId     = useStore(s => s.hoveredBookId);
   const setHoveredBookId  = useStore(s => s.setHoveredBookId);
   const shelfScrollIndex  = useStore(s => s.shelfScrollIndex);
@@ -545,6 +546,26 @@ export function DataPanel() {
   const setSelectedBookId = useStore(s => s.setSelectedBookId);
 
   const [minimized, setMinimized] = useState(false);
+  const entranceRef = useRef<HTMLDivElement>(null);
+
+  // ── Entrance animation — slides in from right on first mount ─────────────
+  useLayoutEffect(() => {
+    if (!entranceRef.current) return;
+    gsap.fromTo(entranceRef.current,
+      { x: 20, opacity: 0 },
+      { x: 0, opacity: 1, duration: 0.6, ease: "power3.out", delay: 0.16 }
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto-minimize when data view is active, restore when leaving
+  useEffect(() => {
+    if (activeView === 'data') {
+      setMinimized(true);
+    } else {
+      setMinimized(false);
+    }
+  }, [activeView]);
 
   // Debounced scroll index — book list only refreshes after 280ms of no scrolling
   // so it doesn't jitter during fast scrolls. Counter uses live value.
@@ -631,14 +652,34 @@ export function DataPanel() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isExpanded]);
 
-  // Compute the windowed book list start
-  const windowStart = useMemo(() => Math.max(
-    0,
-    Math.min(
-      Math.round(stableScrollIndex - WINDOW_SIZE / 2),
-      Math.max(0, filteredBooks.length - WINDOW_SIZE)
-    )
-  ), [stableScrollIndex, filteredBooks.length]);
+  // Local scroll index for compact list — independent of shelf scroll
+  const [compactIdx, setCompactIdx] = useState(0);
+
+  const handleListWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    setCompactIdx(prev =>
+      Math.max(0, Math.min(prev + (e.deltaY > 0 ? 1 : -1), Math.max(0, filteredBooks.length - WINDOW_SIZE)))
+    );
+  }, [filteredBooks.length]);
+
+  // Wheel on carousel → scroll it horizontally
+  const handleCarouselWheel = useCallback((e: React.WheelEvent) => {
+    if (!filterRowRef.current) return;
+    e.preventDefault();
+    filterRowRef.current.scrollBy({ left: e.deltaY * 0.8, behavior: "auto" });
+  }, []);
+
+  // Compute the windowed book list start — shelf view follows the 3D scroll,
+  // other views use the local wheel-driven compactIdx
+  const windowStart = useMemo(() => {
+    if (activeView === 'shelf') {
+      return Math.max(0, Math.min(
+        Math.round(stableScrollIndex - WINDOW_SIZE / 2),
+        Math.max(0, filteredBooks.length - WINDOW_SIZE)
+      ));
+    }
+    return compactIdx;
+  }, [activeView, stableScrollIndex, compactIdx, filteredBooks.length]);
 
   const [indexSelectedId, setIndexSelectedId] = useState<string | null>(null);
   const handleFullIndexSelect = useCallback((id: string) => {
@@ -678,10 +719,10 @@ export function DataPanel() {
         onClick={isExpanded ? () => setActiveView("shelf") : undefined}
       />
 
-    <div style={{
+    <div ref={entranceRef} style={{
       position: "fixed",
       top: 20,
-      right: 0,
+      right: 20,
       zIndex: 30,
       pointerEvents: "none",
     }}>
@@ -690,6 +731,7 @@ export function DataPanel() {
         width: panelW,
         height: panelH,
         background: "#d9d9d9",
+        borderRadius: 8,
         pointerEvents: "auto",
         overflow: "hidden",
         display: "flex",
@@ -735,6 +777,25 @@ export function DataPanel() {
             <FilterRightArrow />
           </button>
 
+          {/* Clear filters — only visible when a genre is active */}
+          <button
+            onClick={clearFilters}
+            style={{
+              flexShrink: 0, display: "flex", alignItems: "center",
+              padding: "0 8px 0 2px", background: "none", border: "none",
+              cursor: "pointer", transition: `opacity 0.2s`,
+              opacity: anyGenreActive ? 0.6 : 0,
+              pointerEvents: anyGenreActive ? "auto" : "none",
+            }}
+            onMouseEnter={e => (e.currentTarget.style.opacity = "1")}
+            onMouseLeave={e => (e.currentTarget.style.opacity = anyGenreActive ? "0.6" : "0")}
+            title="Clear all filters"
+          >
+            <span style={{ ...MONO, fontSize: 9, letterSpacing: "0.08em", color: "#e9eae5", lineHeight: 1 }}>
+              CLEAR
+            </span>
+          </button>
+
           {/* Scrollable genre labels */}
           <div
             ref={filterRowRef}
@@ -742,6 +803,7 @@ export function DataPanel() {
             onMouseMove={onFilterMouseMove}
             onMouseUp={onFilterMouseUp}
             onMouseLeave={onFilterMouseUp}
+            onWheel={handleCarouselWheel}
             style={{
               display: "flex", alignItems: "center", gap: 12,
               padding: "3px 0", overflowX: "auto", scrollbarWidth: "none",
@@ -831,7 +893,7 @@ export function DataPanel() {
 
             </div>
           ) : (
-            <>
+            <div onWheel={handleListWheel} style={{ display: "flex", flexDirection: "column" }}>
               <HoverRow bookId={hoveredBookId} />
               <BookList
                 books={filteredBooks}
@@ -840,7 +902,7 @@ export function DataPanel() {
                 onHover={setHoveredBookId}
                 onSelect={setSelectedBookId}
               />
-            </>
+            </div>
           )}
         </div>
 

@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { IBM_Plex_Mono, EB_Garamond } from 'next/font/google';
 import './globals.css';
 
@@ -18,6 +18,12 @@ const ebGaramond = EB_Garamond({
 export const metadata: Metadata = {
   title: 'Books Books',
   description: 'A personal reading library visualizer',
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover", // enables env(safe-area-inset-*) for iPhone notch/home bar
 };
 
 export default function RootLayout({

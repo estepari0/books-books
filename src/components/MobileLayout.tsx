@@ -1,14 +1,16 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import gsap from "gsap";
 import { useStore } from "@/store";
 import { ShelfView }  from "./ShelfView";
 import { BookOverlay } from "./BookOverlay";
-import { DataView }   from "./DataView";
+import { MobileDataView } from "./MobileDataView";
 import { GENRE_COLORS } from "@/lib/genreColor";
+import { ShelfIcon, IndexIcon, DataIcon } from "./FilterBar";
 
 const GENRES       = Object.keys(GENRE_COLORS);
-const MOBILE_ROWS  = 5;
+const MOBILE_ROWS  = 6;
 
 // ── Type tokens ───────────────────────────────────────────────────────────────
 const MONO: React.CSSProperties = {
@@ -42,21 +44,21 @@ function BBLogoMini() {
   );
 }
 
-// ── Mini arrow icons for genre strip scroll ────────────────────────────────────
+// ── Arrow icons — 18px visual, rendered inside a 44px tap target ───────────────
 function ArrowLeft() {
   return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-      <line x1="12" y1="8" x2="4.5" y2="8" stroke="#e9eae5" strokeWidth="1" strokeLinecap="round"/>
-      <polyline points="8,5 4.5,8 8,11" fill="none" stroke="#e9eae5" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/>
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+      <line x1="12" y1="8" x2="4.5" y2="8" stroke="#e9eae5" strokeWidth="1.2" strokeLinecap="round"/>
+      <polyline points="8,5 4.5,8 8,11" fill="none" stroke="#e9eae5" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   );
 }
 
 function ArrowRight() {
   return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-      <line x1="4" y1="8" x2="11.5" y2="8" stroke="#e9eae5" strokeWidth="1" strokeLinecap="round"/>
-      <polyline points="8,5 11.5,8 8,11" fill="none" stroke="#e9eae5" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/>
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+      <line x1="4" y1="8" x2="11.5" y2="8" stroke="#e9eae5" strokeWidth="1.2" strokeLinecap="round"/>
+      <polyline points="8,5 11.5,8 8,11" fill="none" stroke="#e9eae5" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   );
 }
@@ -161,6 +163,35 @@ export function MobileLayout() {
   // Genre strip ref for arrow-scroll
   const filterRowRef = useRef<HTMLDivElement>(null);
 
+  // Header refs for scroll-fade
+  const topNavRef      = useRef<HTMLDivElement>(null);
+  const filterStripRef = useRef<HTMLDivElement>(null);
+  const headersVisible = useRef(true);
+
+  // Restore headers whenever the overlay closes
+  useEffect(() => {
+    if (!selectedBookId && !headersVisible.current) {
+      headersVisible.current = true;
+      gsap.to([topNavRef.current, filterStripRef.current], {
+        opacity: 1, y: 0, duration: 0.3, ease: "power2.out",
+      });
+    }
+  }, [selectedBookId]);
+
+  const handleOverlayScroll = useCallback((direction: "up" | "down") => {
+    if (direction === "down" && headersVisible.current) {
+      headersVisible.current = false;
+      gsap.to([topNavRef.current, filterStripRef.current], {
+        opacity: 0, y: -6, duration: 0.22, ease: "power2.in",
+      });
+    } else if (direction === "up" && !headersVisible.current) {
+      headersVisible.current = true;
+      gsap.to([topNavRef.current, filterStripRef.current], {
+        opacity: 1, y: 0, duration: 0.3, ease: "power2.out",
+      });
+    }
+  }, []);
+
   // Whether compact book list is user-minimized
   const [listMinimized, setListMinimized] = useState(false);
 
@@ -205,109 +236,104 @@ export function MobileLayout() {
   return (
     <div style={{
       position: "fixed",
-      inset: 0,
+      top: 0,
+      left: 0,
+      width: "100%",
       height: "100svh",
       display: "flex",
       flexDirection: "column",
       overflow: "hidden",
       background: "#E6E6E6",
+      paddingBottom: "env(safe-area-inset-bottom)",
     }}>
 
-      {/* ── TOP NAV — tabs + logo + counter ─────────────────────────────── */}
-      {/* Slightly darker than the genre strip so the two rows read as distinct */}
-      <div style={{
+      {/* ── TOP NAV — logo + tabs spread full width ──────────────────── */}
+      <div ref={topNavRef} style={{
         flexShrink: 0,
-        height: "clamp(44px, 7svh, 58px)",
+        height: "clamp(55px, 8svh, 67px)",
         background: "#141412",
         display: "flex",
         alignItems: "center",
-        padding: "0 14px",
-        gap: 8,
+        justifyContent: "space-between",
+        padding: "0 16px",
         userSelect: "none",
-        borderBottom: "0.5px solid #ffffff0a",
+        borderBottom: "0.5px solid #ffffff18",
       }}>
         <BBLogoMini />
 
-        {/* Position counter — shows current book index in shelf view,
-            total count in index view */}
-        <span style={{
-          ...MONO,
-          fontSize: 10,
-          letterSpacing: "0.04em",
-          color: "#e9eae5",
-          opacity: 0.5,
-          flexShrink: 0,
-          minWidth: 36,
-        }}>
-          {activeView === "shelf"
-            ? `${displayIndex}/${filteredBooks.length}`
-            : `${filteredBooks.length}/${booksLength}`}
-        </span>
+        {/* Hairline divider */}
+        <div style={{ width: 1, height: 20, background: "#e9eae522", flexShrink: 0, marginLeft: 12 }} />
 
-        <div style={{ width: 1, height: 14, background: "#e9eae525", flexShrink: 0, marginLeft: 2 }} />
-
-        {/* View tabs */}
-        {(["shelf", "index", "data"] as const).map(view => {
-          const labels: Record<string, string> = { shelf: "SHELF", index: "INDEX", data: "DATA" };
-          const active = activeView === view;
-          return (
-            <button
-              key={view}
-              onClick={() => setActiveView(view)}
-              style={{
-                ...MONO,
-                fontSize: 10,
-                letterSpacing: "0.08em",
-                color: "#e9eae5",
-                background: "none",
-                border: active ? "1px solid #e9eae530" : "1px solid transparent",
-                borderRadius: 6,
-                padding: "4px 8px",
-                cursor: "pointer",
-                opacity: active ? 1 : 0.4,
-                flexShrink: 0,
-                transition: "opacity 0.15s, border-color 0.15s",
-                WebkitTapHighlightColor: "transparent",
-                outline: "none",
-              }}
-            >
-              {labels[view]}
-            </button>
-          );
-        })}
+        {/* View tabs — evenly spaced across remaining width */}
+        <div style={{ display: "flex", alignItems: "center", flex: 1, justifyContent: "space-evenly" }}>
+          {(["shelf", "index", "data"] as const).map(view => {
+            const labels: Record<string, string> = { shelf: "SHELF", index: "INDEX", data: "DATA" };
+            const icons: Record<string, React.ReactNode> = { shelf: <ShelfIcon />, index: <IndexIcon />, data: <DataIcon /> };
+            const active = activeView === view;
+            return (
+              <button
+                key={view}
+                onClick={() => setActiveView(view)}
+                style={{
+                  ...MONO,
+                  fontSize: 14,
+                  letterSpacing: "0.04em",
+                  color: "#e9eae5",
+                  background: "none",
+                  border: active ? "1px solid #e9eae548" : "1px solid transparent",
+                  borderRadius: 8,
+                  padding: "6px 12px",
+                  cursor: "pointer",
+                  opacity: active ? 1 : 0.5,
+                  flexShrink: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  transition: "opacity 0.15s, border-color 0.15s",
+                  WebkitTapHighlightColor: "transparent",
+                  outline: "none",
+                }}
+              >
+                {icons[view]}{labels[view]}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* ── GENRE FILTER STRIP — arrows + scrollable chips + minimize ─── */}
       {/* Slightly lighter than nav to create a readable two-tier header */}
-      <div style={{
+      <div ref={filterStripRef} style={{
         flexShrink: 0,
-        height: "clamp(30px, 4svh, 38px)",
+        height: "clamp(48px, 6svh, 60px)",
         background: "#1e1e1c",
         display: "flex",
         alignItems: "center",
         borderBottom: "0.5px solid #ffffff08",
         userSelect: "none",
       }}>
-        {/* Left arrow */}
+        {/* Left arrow — 44px tap target, icon centered inside */}
         <button
-          onClick={() => filterRowRef.current?.scrollBy({ left: -120, behavior: "smooth" })}
+          onClick={() => filterRowRef.current?.scrollBy({ left: -160, behavior: "smooth" })}
           style={{
-            flexShrink: 0, display: "flex", alignItems: "center",
-            padding: "0 6px 0 10px", background: "none", border: "none",
-            cursor: "pointer", opacity: 0.5,
+            flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+            width: 44, height: 44,
+            background: "none", border: "none",
+            cursor: "pointer", opacity: 0.7,
             WebkitTapHighlightColor: "transparent",
           }}
         >
           <ArrowLeft />
         </button>
 
-        {/* Right arrow */}
+        {/* Right arrow — 44px tap target, icon centered inside */}
         <button
-          onClick={() => filterRowRef.current?.scrollBy({ left: 120, behavior: "smooth" })}
+          onClick={() => filterRowRef.current?.scrollBy({ left: 160, behavior: "smooth" })}
           style={{
-            flexShrink: 0, display: "flex", alignItems: "center",
-            padding: "0 6px 0 0", background: "none", border: "none",
-            cursor: "pointer", opacity: 0.5,
+            flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+            width: 44, height: 44,
+            background: "none", border: "none",
+            cursor: "pointer", opacity: 0.7,
             WebkitTapHighlightColor: "transparent",
           }}
         >
@@ -339,8 +365,8 @@ export function MobileLayout() {
                   onClick={() => toggleGenre(genre)}
                   style={{
                     ...MONO,
-                    fontSize: 10,
-                    letterSpacing: "0.07em",
+                    fontSize: 14,
+                    letterSpacing: "0.04em",
                     color: "#e9eae5",
                     background: "none",
                     border: "none",
@@ -360,6 +386,32 @@ export function MobileLayout() {
             );
           })}
         </div>
+
+        {/* Clear — only visible when a genre filter is active */}
+        {anyGenreActive && (
+          <button
+            onClick={() => setFilter("genre", [])}
+            style={{
+              ...MONO,
+              fontSize: 12,
+              letterSpacing: "0.06em",
+              color: "#e9eae5",
+              background: "none",
+              border: "1px solid #e9eae540",
+              borderRadius: 6,
+              padding: "4px 10px",
+              cursor: "pointer",
+              flexShrink: 0,
+              marginRight: 8,
+              opacity: 0.8,
+              whiteSpace: "nowrap",
+              WebkitTapHighlightColor: "transparent",
+              outline: "none",
+            }}
+          >
+            CLEAR
+          </button>
+        )}
 
         {/* Minimize/expand the compact list — only in shelf view */}
         {activeView === "shelf" && !selectedBookId && (
@@ -443,16 +495,17 @@ export function MobileLayout() {
       {/* ── FULL INDEX LIST ──────────────────────────────────────────────── */}
       {activeView === "index" && <MobileIndexList />}
 
-      {/* ── DATA VIZ ─────────────────────────────────────────────────────── */}
+      {/* ── DATA VIZ — 2 regions per row, vertically scrollable ─────────── */}
       {activeView === "data" && (
         <div style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative" }}>
-          <DataView />
+          <MobileDataView />
         </div>
       )}
 
       {/* BookOverlay — position:fixed so it breaks out of the flex stack.
-          zIndex 9999 ensures it's always on top of the canvas.           */}
-      <BookOverlay />
+          mobileMode enables full-panel scroll + calls onScrollChange so
+          the top nav and filter strip fade when reading long content.    */}
+      <BookOverlay mobileMode onScrollChange={handleOverlayScroll} />
     </div>
   );
 }

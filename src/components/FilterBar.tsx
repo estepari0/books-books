@@ -1,5 +1,7 @@
 "use client";
 
+import { useRef, useEffect, useLayoutEffect, forwardRef } from "react";
+import gsap from "gsap";
 import { useStore } from "@/store";
 
 const MONO: React.CSSProperties = {
@@ -18,8 +20,8 @@ const SERIF: React.CSSProperties = {
 // ── Counter badge — hangs from top of viewport ────────────────────────────────
 function CounterBadge({ index, total }: { index: number; total: number }) {
   const displayIdx = total > 0 ? index + 1 : 0;
-  const W = 52, H = 98;
-  const bodyH = H * 0.82;
+  const W = 47, H = 83;
+  const bodyH = H * 0.80;
   return (
     <div style={{ position: "relative", width: W, height: H, flexShrink: 0 }}>
       <svg
@@ -40,13 +42,13 @@ function CounterBadge({ index, total }: { index: number; total: number }) {
         display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center", gap: 1,
       }}>
-        <span style={{ ...SERIF, fontSize: 13, color: "#e9eae5", lineHeight: 1, userSelect: "none" }}>
+        <span style={{ ...SERIF, fontSize: 16, color: "#e9eae5", lineHeight: 1, userSelect: "none" }}>
           {displayIdx}
         </span>
         <span style={{ ...MONO, fontSize: 8, color: "#e9eae5", opacity: 0.4, lineHeight: 1, userSelect: "none" }}>
           //
         </span>
-        <span style={{ ...SERIF, fontSize: 11, color: "#e9eae5", opacity: 0.65, lineHeight: 1, userSelect: "none" }}>
+        <span style={{ ...SERIF, fontSize: 16, color: "#e9eae5", opacity: 0.65, lineHeight: 1, userSelect: "none" }}>
           {total}
         </span>
       </div>
@@ -54,10 +56,10 @@ function CounterBadge({ index, total }: { index: number; total: number }) {
   );
 }
 
-// ── BB logotype (icons-home-d5db76f9.svg) ────────────────────────────────────
+// ── BB logotype ───────────────────────────────────────────────────────────────
 function BBLogo() {
   return (
-    <svg width="48" height="78" viewBox="0 0 29 48" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+    <svg width="22" height="36" viewBox="0 0 29 48" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
       <path
         fillRule="evenodd"
         clipRule="evenodd"
@@ -68,97 +70,237 @@ function BBLogo() {
   );
 }
 
-// ── SHELF icon: shelf-icon.svg (4 vertical stripes = books on a shelf) ─────────
-function ShelfIcon() {
+// ── SHELF icon ────────────────────────────────────────────────────────────────
+export function ShelfIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
-      <path d="M0.882324 14.7044C0.882324 14.7846 0.947461 14.8496 1.02781 14.8496H2.82708C2.90743 14.8496 2.97257 14.7846 2.97257 14.7044V2.65953C2.97257 2.57935 2.90743 2.51436 2.82708 2.51436H1.02781C0.947461 2.51436 0.882324 2.57935 0.882324 2.65953V14.7044Z" fill="#141412"/>
-      <path d="M10.7785 14.0917C10.7643 14.1707 10.8133 14.2589 10.8879 14.2888L12.6369 14.9901C12.7115 15.0199 12.7834 14.9802 12.7975 14.9013L14.8799 3.27219C14.894 3.19326 14.845 3.10504 14.7705 3.07515L13.0215 2.37389C12.9469 2.34399 12.875 2.38374 12.8609 2.46267L10.7785 14.0917Z" fill="#141412"/>
-      <path d="M4.88098 14.7055C4.89098 14.7851 4.96178 14.8319 5.03911 14.8101L6.81327 14.3106C6.8906 14.2889 6.94518 14.2067 6.93518 14.1272L5.44704 2.29276C5.43704 2.21321 5.36624 2.16637 5.28891 2.18814L3.51475 2.68766C3.43742 2.70944 3.38284 2.79158 3.39284 2.87113L4.88098 14.7055Z" fill="#141412"/>
-      <path d="M8.45954 14.5227C8.46954 14.6023 8.54034 14.6491 8.61767 14.6273L10.3918 14.1278C10.4692 14.106 10.5237 14.0239 10.5137 13.9444L9.0256 2.10996C9.01559 2.0304 8.9448 1.98356 8.86747 2.00533L7.09331 2.50486C7.01597 2.52663 6.9614 2.60877 6.9714 2.68833L8.45954 14.5227Z" fill="#141412"/>
+      <path d="M0.882324 14.7044C0.882324 14.7846 0.947461 14.8496 1.02781 14.8496H2.82708C2.90743 14.8496 2.97257 14.7846 2.97257 14.7044V2.65953C2.97257 2.57935 2.90743 2.51436 2.82708 2.51436H1.02781C0.947461 2.51436 0.882324 2.57935 0.882324 2.65953V14.7044Z" fill="currentColor"/>
+      <path d="M10.7785 14.0917C10.7643 14.1707 10.8133 14.2589 10.8879 14.2888L12.6369 14.9901C12.7115 15.0199 12.7834 14.9802 12.7975 14.9013L14.8799 3.27219C14.894 3.19326 14.845 3.10504 14.7705 3.07515L13.0215 2.37389C12.9469 2.34399 12.875 2.38374 12.8609 2.46267L10.7785 14.0917Z" fill="currentColor"/>
+      <path d="M4.88098 14.7055C4.89098 14.7851 4.96178 14.8319 5.03911 14.8101L6.81327 14.3106C6.8906 14.2889 6.94518 14.2067 6.93518 14.1272L5.44704 2.29276C5.43704 2.21321 5.36624 2.16637 5.28891 2.18814L3.51475 2.68766C3.43742 2.70944 3.38284 2.79158 3.39284 2.87113L4.88098 14.7055Z" fill="currentColor"/>
+      <path d="M8.45954 14.5227C8.46954 14.6023 8.54034 14.6491 8.61767 14.6273L10.3918 14.1278C10.4692 14.106 10.5237 14.0239 10.5137 13.9444L9.0256 2.10996C9.01559 2.0304 8.9448 1.98356 8.86747 2.00533L7.09331 2.50486C7.01597 2.52663 6.9614 2.60877 6.9714 2.68833L8.45954 14.5227Z" fill="currentColor"/>
     </svg>
   );
 }
 
-// ── FULL INDEX icon: overlapping ovals (index-icon.svg) ──────────────────────
-function IndexIcon() {
+// ── FULL INDEX icon ───────────────────────────────────────────────────────────
+export function IndexIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M8.2508 8.2377C8.2508 11.1304 6.60132 13.4754 4.56658 13.4754C2.53184 13.4754 0.882355 11.1304 0.882355 8.2377C0.882355 5.345 2.53184 3 4.56658 3C6.60132 3 8.2508 5.345 8.2508 8.2377Z" stroke="#141412" strokeWidth="0.748243"/>
-      <path d="M10.4613 8.2377C10.4613 11.1304 8.81184 13.4754 6.7771 13.4754C4.74236 13.4754 3.09287 11.1304 3.09287 8.2377C3.09287 5.345 4.74236 3 6.7771 3C8.81184 3 10.4613 5.345 10.4613 8.2377Z" stroke="#141412" strokeWidth="0.748243"/>
-      <path d="M12.6718 8.2377C12.6718 11.1304 11.0224 13.4754 8.98762 13.4754C6.95288 13.4754 5.30339 11.1304 5.30339 8.2377C5.30339 5.345 6.95288 3 8.98762 3C11.0224 3 12.6718 5.345 12.6718 8.2377Z" stroke="#141412" strokeWidth="0.748243"/>
-      <path d="M14.8824 8.2377C14.8824 11.1304 13.2329 13.4754 11.1981 13.4754C9.16339 13.4754 7.51391 11.1304 7.51391 8.2377C7.51391 5.345 9.16339 3 11.1981 3C13.2329 3 14.8824 5.345 14.8824 8.2377Z" stroke="#141412" strokeWidth="0.748243"/>
+      <path d="M8.2508 8.2377C8.2508 11.1304 6.60132 13.4754 4.56658 13.4754C2.53184 13.4754 0.882355 11.1304 0.882355 8.2377C0.882355 5.345 2.53184 3 4.56658 3C6.60132 3 8.2508 5.345 8.2508 8.2377Z" stroke="currentColor" strokeWidth="0.748243"/>
+      <path d="M10.4613 8.2377C10.4613 11.1304 8.81184 13.4754 6.7771 13.4754C4.74236 13.4754 3.09287 11.1304 3.09287 8.2377C3.09287 5.345 4.74236 3 6.7771 3C8.81184 3 10.4613 5.345 10.4613 8.2377Z" stroke="currentColor" strokeWidth="0.748243"/>
+      <path d="M12.6718 8.2377C12.6718 11.1304 11.0224 13.4754 8.98762 13.4754C6.95288 13.4754 5.30339 11.1304 5.30339 8.2377C5.30339 5.345 6.95288 3 8.98762 3C11.0224 3 12.6718 5.345 12.6718 8.2377Z" stroke="currentColor" strokeWidth="0.748243"/>
+      <path d="M14.8824 8.2377C14.8824 11.1304 13.2329 13.4754 11.1981 13.4754C9.16339 13.4754 7.51391 11.1304 7.51391 8.2377C7.51391 5.345 9.16339 3 11.1981 3C13.2329 3 14.8824 5.345 14.8824 8.2377Z" stroke="currentColor" strokeWidth="0.748243"/>
     </svg>
   );
 }
 
-// ── DATA icon: node graph (data-icon.svg) ─────────────────────────────────────
-function DataIcon() {
+// ── DATA icon ─────────────────────────────────────────────────────────────────
+export function DataIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M5.58821 1.82353L3.11762 8.41176L12.5882 7.17647L13 12.9412L5.58821 13.7647M4.35291 8C4.35291 8.68223 3.79985 9.23529 3.11762 9.23529C2.43538 9.23529 1.88232 8.68223 1.88232 8C1.88232 7.31777 2.43538 6.76471 3.11762 6.76471C3.79985 6.76471 4.35291 7.31777 4.35291 8ZM14.2353 12.9412C14.2353 13.6234 13.6822 14.1765 13 14.1765C12.3177 14.1765 11.7647 13.6234 11.7647 12.9412C11.7647 12.2589 12.3177 11.7059 13 11.7059C13.6822 11.7059 14.2353 12.2589 14.2353 12.9412ZM6.8235 13.7647C6.8235 14.4469 6.27044 15 5.58821 15C4.90597 15 4.35291 14.4469 4.35291 13.7647C4.35291 13.0825 4.90597 12.5294 5.58821 12.5294C6.27044 12.5294 6.8235 13.0825 6.8235 13.7647ZM13.4117 7.17647C13.4117 7.8587 12.8587 8.41176 12.1764 8.41176C11.4942 8.41176 10.9411 7.8587 10.9411 7.17647C10.9411 6.49424 11.4942 5.94118 12.1764 5.94118C12.8587 5.94118 13.4117 6.49424 13.4117 7.17647ZM6.8235 2.23529C6.8235 2.91753 6.27044 3.47059 5.58821 3.47059C4.90597 3.47059 4.35291 2.91753 4.35291 2.23529C4.35291 1.55306 4.90597 1 5.58821 1C6.27044 1 6.8235 1.55306 6.8235 2.23529Z" stroke="#141412" strokeWidth="0.823529"/>
+      <path d="M5.58821 1.82353L3.11762 8.41176L12.5882 7.17647L13 12.9412L5.58821 13.7647M4.35291 8C4.35291 8.68223 3.79985 9.23529 3.11762 9.23529C2.43538 9.23529 1.88232 8.68223 1.88232 8C1.88232 7.31777 2.43538 6.76471 3.11762 6.76471C3.79985 6.76471 4.35291 7.31777 4.35291 8ZM14.2353 12.9412C14.2353 13.6234 13.6822 14.1765 13 14.1765C12.3177 14.1765 11.7647 13.6234 11.7647 12.9412C11.7647 12.2589 12.3177 11.7059 13 11.7059C13.6822 11.7059 14.2353 12.2589 14.2353 12.9412ZM6.8235 13.7647C6.8235 14.4469 6.27044 15 5.58821 15C4.90597 15 4.35291 14.4469 4.35291 13.7647C4.35291 13.0825 4.90597 12.5294 5.58821 12.5294C6.27044 12.5294 6.8235 13.0825 6.8235 13.7647ZM13.4117 7.17647C13.4117 7.8587 12.8587 8.41176 12.1764 8.41176C11.4942 8.41176 10.9411 7.8587 10.9411 7.17647C10.9411 6.49424 11.4942 5.94118 12.1764 5.94118C12.8587 5.94118 13.4117 6.49424 13.4117 7.17647ZM6.8235 2.23529C6.8235 2.91753 6.27044 3.47059 5.58821 3.47059C4.90597 3.47059 4.35291 2.91753 4.35291 2.23529C4.35291 1.55306 4.90597 1 5.58821 1C6.27044 1 6.8235 1.55306 6.8235 2.23529Z" stroke="currentColor" strokeWidth="0.823529"/>
     </svg>
   );
 }
 
+// ── Static view definitions (outside component — no per-render allocation) ───
+const VIEWS = [
+  { id: "shelf" as const, label: "SHELF",      icon: <ShelfIcon /> },
+  { id: "index" as const, label: "FULL INDEX", icon: <IndexIcon /> },
+  { id: "data"  as const, label: "DATA",       icon: <DataIcon /> },
+];
+
+// ── Animated nav button — forwardRef so FilterBar can measure offsetLeft/Width
+const NavButton = forwardRef<
+  HTMLButtonElement,
+  { label: string; icon: React.ReactNode; active: boolean; onClick: () => void }
+>(function NavButton({ label, icon, active, onClick }, forwardedRef) {
+  const ownRef = useRef<HTMLButtonElement>(null);
+
+  // Merge own ref (for GSAP click animation) with forwarded ref (for pill measurement)
+  const setRef = (el: HTMLButtonElement | null) => {
+    (ownRef as React.MutableRefObject<HTMLButtonElement | null>).current = el;
+    if (typeof forwardedRef === "function") forwardedRef(el);
+    else if (forwardedRef) (forwardedRef as React.MutableRefObject<HTMLButtonElement | null>).current = el;
+  };
+
+  const handleClick = () => {
+    if (ownRef.current) {
+      gsap.killTweensOf(ownRef.current);
+      gsap.fromTo(ownRef.current,
+        { scale: 0.95 },
+        { scale: 1, duration: 0.7, ease: "elastic.out(1, 0.7)" }
+      );
+    }
+    onClick();
+  };
+
+  return (
+    <button
+      ref={setRef}
+      onClick={handleClick}
+      style={{
+        ...MONO,
+        display: "flex", alignItems: "center", gap: 6,
+        padding: "4px 8px",
+        border: "none",
+        borderRadius: 8,
+        background: "none",
+        cursor: "pointer",
+        opacity: active ? 1 : 0.45,
+        transition: "opacity 0.2s",
+        transformOrigin: "center",
+        position: "relative",
+        zIndex: 1,           // sits above the pill so clicks register
+        userSelect: "none",
+      }}
+    >
+      {icon}{label}
+    </button>
+  );
+});
+
+// ── FilterBar ─────────────────────────────────────────────────────────────────
 export function FilterBar() {
   const activeView       = useStore(s => s.activeView);
   const setActiveView    = useStore(s => s.setActiveView);
   const shelfScrollIndex = useStore(s => s.shelfScrollIndex);
   const booksLength      = useStore(s => s.books.length);
 
-  const views = [
-    { id: 'shelf' as const,  label: 'SHELF',      icon: <ShelfIcon /> },
-    { id: 'index' as const,  label: 'FULL INDEX', icon: <IndexIcon /> },
-    { id: 'data'  as const,  label: 'DATA',       icon: <DataIcon /> },
-  ];
+  // Refs for the pill indicator
+  const pillRef  = useRef<HTMLDivElement>(null);
+  const btnRefs  = useRef<(HTMLButtonElement | null)[]>([null, null, null]);
+
+  // Individual element refs for staggered entrance
+  const counterRef = useRef<HTMLDivElement>(null);
+  const logoRef    = useRef<HTMLDivElement>(null);
+  const dividerRef = useRef<HTMLDivElement>(null);
+
+  // ── Staggered entrance — each chrome element slides down independently ────
+  useLayoutEffect(() => {
+    // Collect in left-to-right order: counter, logo, divider, then each nav btn
+    const els = [
+      counterRef.current,
+      logoRef.current,
+      dividerRef.current,
+      ...btnRefs.current,
+    ].filter(Boolean) as HTMLElement[];
+
+    gsap.fromTo(els,
+      { y: -14, opacity: 0 },
+      {
+        y: 0, opacity: 1,
+        duration: 0.48,
+        stagger:  0.065,
+        ease:     "power3.out",
+        delay:    0.05,
+      }
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Snap pill instantly on first mount (no animation)
+  useEffect(() => {
+    const idx = VIEWS.findIndex(v => v.id === activeView);
+    const btn = btnRefs.current[idx];
+    const pill = pillRef.current;
+    if (!btn || !pill) return;
+    gsap.set(pill, { left: btn.offsetLeft, width: btn.offsetWidth });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Slide pill with directional stretch — leading edge moves first, trailing catches up
+  useEffect(() => {
+    const idx = VIEWS.findIndex(v => v.id === activeView);
+    const btn = btnRefs.current[idx];
+    const pill = pillRef.current;
+    if (!btn || !pill) return;
+
+    const targetLeft  = btn.offsetLeft;
+    const targetWidth = btn.offsetWidth;
+
+    // Read current position from GSAP's cache so we get the live animated value
+    const currentLeft  = gsap.getProperty(pill, "left")  as number;
+    const currentWidth = gsap.getProperty(pill, "width") as number;
+
+    gsap.killTweensOf(pill);
+
+    const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
+    const movingRight = targetLeft > currentLeft;
+
+    if (movingRight) {
+      // Right edge leaps ahead first → left edge slides over
+      tl.to(pill, {
+        width: targetLeft + targetWidth - currentLeft,
+        duration: 0.22,
+        ease: "power2.out",
+      }).to(pill, {
+        left:  targetLeft,
+        width: targetWidth,
+        duration: 0.34,
+      });
+    } else {
+      // Left edge leaps back first → right edge contracts
+      tl.to(pill, {
+        left:  targetLeft,
+        width: currentWidth + (currentLeft - targetLeft),
+        duration: 0.22,
+        ease: "power2.out",
+      }).to(pill, {
+        width: targetWidth,
+        duration: 0.34,
+      });
+    }
+  }, [activeView]);
 
   return (
     <div style={{
       position: "fixed",
-      top: 20,
-      left: 20,
+      top: 20, left: 20,
       zIndex: 30,
       display: "flex",
       flexDirection: "row",
       alignItems: "flex-start",
       gap: 12,
     }}>
-      {/* BB logotype — standalone mark */}
-      <BBLogo />
+      {/* Counter badge — leads the bar */}
+      <div ref={counterRef}><CounterBadge index={shelfScrollIndex} total={booksLength} /></div>
 
-      {/* Counter badge — hangs from top, right after BB logo */}
-      <CounterBadge index={shelfScrollIndex} total={booksLength} />
+      {/* BB logotype */}
+      <div ref={logoRef} style={{ display: "flex" }}><BBLogo /></div>
 
-      {/* Hairline divider */}
-      <div style={{ width: 1, height: 20, background: "#14141230", flexShrink: 0 }} />
+      {/* Hairline divider — top-aligned, fixed size */}
+      <div ref={dividerRef} style={{ width: 1, height: 20, background: "#14141230", flexShrink: 0 }} />
 
-      {/* View switcher — horizontal */}
-      {views.map(({ id, label, icon }) => {
-        const active = activeView === id;
-        return (
-          <button
+      {/* ── Nav button group with sliding pill ── */}
+      <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 2 }}>
+
+        {/* Sliding outline pill — absolute, animates left + width */}
+        <div
+          ref={pillRef}
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            left: 0,
+            width: 0,
+            border: "1px solid #696969",
+            borderRadius: 8,
+            pointerEvents: "none",
+          }}
+        />
+
+        {VIEWS.map(({ id, label, icon }, i) => (
+          <NavButton
             key={id}
+            ref={el => { btnRefs.current[i] = el; }}
+            label={label}
+            icon={icon}
+            active={activeView === id}
             onClick={() => setActiveView(id)}
-            style={{
-              ...MONO,
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "4px 8px",
-              border: active ? "1px solid #696969" : "1px solid transparent",
-              borderRadius: 8,
-              background: "none",
-              cursor: "pointer",
-              opacity: active ? 1 : 0.5,
-              transition: "opacity 0.15s, border-color 0.15s",
-            }}
-          >
-            {icon}
-            {label}
-          </button>
-        );
-      })}
+          />
+        ))}
+      </div>
     </div>
   );
 }

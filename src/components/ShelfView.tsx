@@ -4,6 +4,7 @@ import { useRef, useEffect, useMemo, useState, useCallback } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { RoundedBoxGeometry as RoundedBoxGeo } from "@react-three/drei";
 import * as THREE from "three";
+import gsap from "gsap";
 import { useStore } from "@/store";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -245,10 +246,12 @@ function makeBookGlass(): THREE.MeshPhysicalMaterial {
     color:              col,
     metalness:          0.05,
     roughness:          0.22,
-    clearcoat:          0.55,         // softer coat — no hard specular sweep
-    clearcoatRoughness: 0.12,         // slightly frosted clearcoat diffuses highlights
+    clearcoat:          0.55,
+    clearcoatRoughness: 0.12,
     envMapIntensity:    1.0,
     side:               THREE.FrontSide,
+    transparent:        true,  // needed for entrance opacity fade
+    opacity:            0,     // starts invisible; entrance tween drives this to 1
   });
 }
 
@@ -260,9 +263,23 @@ function makeCoverMat(fallback: THREE.Texture): THREE.MeshStandardMaterial {
     metalness:       0.0,
     envMapIntensity: 0.3,
     transparent:     true,   // needed for the soft edge fade alpha
+    opacity:         0,      // starts invisible; entrance tween drives both glass + cover to 1
     alphaTest:       0.005,  // skip fully transparent pixels (perf + depth sorting)
   });
 }
+
+// ─── Loading-state placeholder seed titles ────────────────────────────────────
+// Eight titles chosen so their heightVH hashes span the full height range.
+const PLACEHOLDER_TITLES = [
+  "The Great Gatsby",
+  "Moby Dick",
+  "Crime and Punishment",
+  "Dune",
+  "One Hundred Years of Solitude",
+  "Beloved",
+  "Invisible Man",
+  "The Brothers Karamazov",
+];
 
 // ─── Layout type ──────────────────────────────────────────────────────────────
 interface BookLayout {
@@ -280,7 +297,8 @@ const LIFT   = 0.35; // world units up
 // lower factor (lag behind).  The cascade creates the wave-organism feel —
 // books settle left-to-right like a single ripple of energy.
 function BookMesh({
-  layout, yBottom, xStart, scrollX, stride, index, totalBooks, hoveredId, selectedId, onClickBook, onHoverBook, mobileMode,
+  layout, yBottom, xStart, scrollX, stride, index, totalBooks,
+  hoveredId, selectedId, onClickBook, onHoverBook, mobileMode, entranceDelay,
 }: {
   layout: BookLayout;
   yBottom: number;
@@ -294,6 +312,7 @@ function BookMesh({
   onClickBook: (id: string) => void;
   onHoverBook: (id: string | null) => void;
   mobileMode: boolean;
+  entranceDelay: number; // seconds — book materialises after this delay on mount
 }) {
   const { gl, invalidate, viewport } = useThree();
   const maxAniso       = useMemo(() => gl.capabilities.getMaxAnisotropy(), [gl]);
@@ -303,6 +322,11 @@ function BookMesh({
   const liftRef        = useRef(0); // 0 = resting, 1 = fully raised
   const dismissRef     = useRef(0); // 0 = visible, 1 = scaled away (another book selected)
   const selectRef      = useRef(0); // 0 = shelf position, 1 = centered + frontal
+  // Entrance fraction: 0 = invisible, 1 = fully present.
+  // Driven by a per-book GSAP tween with a staggered delay so books
+  // materialise one at a time, building the shelf from left to right.
+  const entranceFracRef    = useRef(0);
+  const prevEntranceFrac   = useRef(-1); // sentinel so first frame always applies
 
   // Per-book lerp factor: leftmost fastest (0.13), rightmost slowest (0.05)
   const lerpFactor  = useMemo(() => {
@@ -327,6 +351,22 @@ function BookMesh({
     if (!layout.coverUrl) return;
     loadRoundedTexture(layout.coverUrl, coverMat, glassMat, maxAniso, invalidate);
   }, [layout.coverUrl, coverMat, glassMat, maxAniso, invalidate]);
+
+  // Per-book entrance: scale materialises from 0 → 1 with a staggered delay.
+  // Each book triggers its own invalidate tick so the canvas keeps rendering
+  // during the stagger sequence without needing a global animation loop.
+  useEffect(() => {
+    const tween = gsap.to(entranceFracRef, {
+      current:    1,
+      duration:   0.7,
+      ease:       "power2.out",
+      delay:      entranceDelay,
+      onUpdate:   () => { invalidate(); },
+    });
+    return () => { tween.kill(); };
+  // entranceDelay and invalidate are stable on mount — no re-run needed
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Dispose GPU resources on unmount — prevents VRAM leaking as filter results change.
   // Materials are always safe to dispose (they hold no shared data).
@@ -395,6 +435,19 @@ function BookMesh({
       moved = true;
     }
 
+    // ── Entrance: opacity fade + Y drift up into resting position ──────────
+    // Books begin invisible and slightly below their shelf Y, then rise and
+    // fade in during the staggered entrance sequence.
+    const ef = entranceFracRef.current;
+    if (ef !== prevEntranceFrac.current) {
+      prevEntranceFrac.current = ef;
+      moved = true;
+      glassMat.opacity = ef;
+      glassMat.needsUpdate = true;
+      coverMat.opacity = ef;
+      coverMat.needsUpdate = true;
+    }
+
     if (moved) {
       const shift    = index * compressionRef.current * stride * 0.18;
       const lift     = liftRef.current * LIFT;
@@ -402,7 +455,9 @@ function BookMesh({
       const d        = 1 - dismissRef.current;
 
       const normalX  = xStart + layout.x - shift - scrollPos.current;
-      const normalY  = y + lift;
+      // Y-approach: books drift UP into position during entrance (0.18 wu below → resting)
+      const ENTRANCE_Y_LIFT = 0.18;
+      const normalY  = y + lift - ENTRANCE_Y_LIFT * (1 - ef);
       // Selected book settles above center — pushed higher on mobile so the
       // BookOverlay panel at the bottom doesn't cover the cover art.
       const selectedY = viewport.height * (mobileMode ? 0.22 : 0.10);
@@ -412,8 +467,11 @@ function BookMesh({
       bookRef.current.position.z = 0;
       bookRef.current.rotation.x = 0;
       bookRef.current.rotation.y = layout.rotY * (1 - s); // lerps to frontal
-      // Dismissed books shrink to 0; selected book scales up more on mobile
-      bookRef.current.scale.setScalar(d * (1 + s * (mobileMode ? 0.30 : 0.10)));
+      // entranceFracRef gates scale from 0→1 on mount (staggered per book).
+      // After entrance, dismiss/select drive scale as before.
+      bookRef.current.scale.setScalar(
+        entranceFracRef.current * d * (1 + s * (mobileMode ? 0.30 : 0.10))
+      );
       invalidate();
     }
   });
@@ -458,8 +516,13 @@ function BookMesh({
 }
 
 // ─── 3-D Scene ────────────────────────────────────────────────────────────────
+// Loading animation constants — applied to the books group as a whole.
+const LOAD_SCALE  = 0.40;   // books start at 40% of final size
+const LOAD_Y_FRAC = 0.22;   // group starts 22% of VP height above its final resting position
+
 function ShelfScene({
-  layouts, stride, scrollX, invalidateRef, hoveredId, selectedId, onClickBook, onHoverBook, mobileMode,
+  layouts, stride, scrollX, invalidateRef, hoveredId, selectedId,
+  onClickBook, onHoverBook, mobileMode, loadFractionRef,
 }: {
   layouts: BookLayout[];
   stride: number;
@@ -470,21 +533,32 @@ function ShelfScene({
   onClickBook: (id: string) => void;
   onHoverBook: (id: string | null) => void;
   mobileMode: boolean;
+  loadFractionRef: React.MutableRefObject<number>;
 }) {
   const { viewport, invalidate } = useThree();
+  const groupRef  = useRef<THREE.Group>(null);
+  const prevFrac  = useRef(-1);
 
   useEffect(() => {
     invalidateRef.current = invalidate;
     invalidate();
   }, [invalidate, invalidateRef]);
 
-  // Decay scroll velocity each frame — books read this for compression.
-  // Running here (once per frame) avoids decaying N times across 200 useFrames.
-  useFrame(() => {
+  // Decay scroll velocity + apply loading group transform every frame.
+  // The group drives ALL books together: compact/centered → full shelf position.
+  useFrame(({ viewport: vp }) => {
+    // Velocity decay
     if (scrollX.current.velocity > 0.001) {
-      scrollX.current.velocity *= 0.86; // natural drag-off
+      scrollX.current.velocity *= 0.86;
       if (scrollX.current.velocity < 0.001) scrollX.current.velocity = 0;
-      invalidate(); // keep rendering until velocity settles
+      invalidate();
+    }
+    // Loading group transform — runs every frame, cost is near-zero
+    const f = loadFractionRef.current;
+    if (groupRef.current && prevFrac.current !== f) {
+      prevFrac.current = f;
+      groupRef.current.scale.setScalar(LOAD_SCALE + (1 - LOAD_SCALE) * f);
+      groupRef.current.position.y = vp.height * LOAD_Y_FRAC * (1 - f);
     }
   });
 
@@ -497,30 +571,48 @@ function ShelfScene({
   return (
     <>
       <ambientLight intensity={1.1} />
-      {layouts.map((layout, i) => (
-        <BookMesh
-          key={layout.id}
-          layout={layout}
-          yBottom={yBottom}
-          xStart={xStart}
-          scrollX={scrollX}
-          stride={stride}
-          index={i}
-          totalBooks={n}
-          hoveredId={hoveredId}
-          selectedId={selectedId}
-          onClickBook={onClickBook}
-          onHoverBook={onHoverBook}
-          mobileMode={mobileMode}
-        />
-      ))}
+      {/*
+        Wrapper group — receives loading-mode scale + Y offset.
+        useFrame applies the transform on every frame while animating,
+        so the very first rendered frame already shows the compact loading state.
+      */}
+      <group ref={groupRef}>
+        {layouts.map((layout, i) => (
+          <BookMesh
+            key={layout.id}
+            layout={layout}
+            yBottom={yBottom}
+            xStart={xStart}
+            scrollX={scrollX}
+            stride={stride}
+            index={i}
+            totalBooks={n}
+            hoveredId={hoveredId}
+            selectedId={selectedId}
+            onClickBook={onClickBook}
+            onHoverBook={onHoverBook}
+            mobileMode={mobileMode}
+            entranceDelay={i * Math.min(0.14, 1.8 / Math.max(1, n - 1))}
+          />
+        ))}
+      </group>
     </>
   );
 }
 
 // ─── ShelfView (host component) ───────────────────────────────────────────────
 // mobileMode: enables touch scroll, widens book spacing, disables mouse edge-scroll.
-export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
+// isLoading:  true while store is fetching — shows placeholder books at compact position.
+// onReady:    fires when the settle animation completes (FilterBar/DataPanel can mount).
+export function ShelfView({
+  mobileMode = false,
+  isLoading  = false,
+  onReady,
+}: {
+  mobileMode?: boolean;
+  isLoading?:  boolean;
+  onReady?:    () => void;
+}) {
   const containerRef    = useRef<HTMLDivElement>(null);
   const edgeRaf         = useRef<number | null>(null);
   const mouseX          = useRef(-1);
@@ -535,6 +627,11 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
   const scrollState     = useRef({ pos: 0, target: 0, max: 0, velocity: 0 });
   const selectedRef     = useRef<string | null>(null);
   const invalidateRef   = useRef<(() => void) | null>(null);
+  // Loading animation — fraction 0 (compact/loading) → 1 (full shelf)
+  const loadFractionRef = useRef(0);
+  const loadStartedRef  = useRef(false);
+  const onReadyRef      = useRef(onReady);
+  useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
   // Scroll throw tracking
   const throwTimeout    = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastWheelDelta  = useRef(0);
@@ -561,9 +658,64 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
   // Keep selectedRef in sync so the wheel closure can read without stale state
   useEffect(() => { selectedRef.current = selectedBookId; }, [selectedBookId]);
 
+  // ── Loading → shelf settle animation ─────────────────────────────────────
+  // Fires once when the store has real books. The GSAP tween drives
+  // loadFractionRef from 0 → 1; ShelfScene.useFrame reads it each frame and
+  // applies the group transform (scale + Y). onReady fires when done.
+  useEffect(() => {
+    if (isLoading || filteredBooks.length === 0 || loadStartedRef.current) return;
+    loadStartedRef.current = true;
+
+    // Books sit at the compact position for a moment, then settle unhurried
+    gsap.to(loadFractionRef, {
+      current:    1,
+      duration:   2.2,            // lush, no rush
+      ease:       "power2.inOut", // gentle S-curve — slow start, slow landing
+      delay:      0.5,            // let books breathe before they start moving
+      onUpdate:   () => { invalidateRef.current?.(); },
+      onComplete: () => { onReadyRef.current?.(); },
+    });
+  }, [isLoading, filteredBooks.length]);
+
   // Book layouts in world-space (X only — group handles viewport offset)
-  const { layouts, maxScroll, stride } = useMemo(() => {
-    const vp      = computeVP();
+  const { layouts, stride } = useMemo(() => {
+    const vp = computeVP();
+
+    // ── Placeholder layout (during initial data fetch) ──────────────────────
+    // Show PLACEHOLDER_TITLES as grey books at the compact loading position.
+    // They are replaced by real books once filteredBooks arrives.
+    if (isLoading && filteredBooks.length === 0) {
+      const VP_H_WU     = 2 * Math.tan((CAM_FOV / 2) * Math.PI / 180) * CAM_Z;
+      const AVG_VH_     = (MIN_VH + MAX_VH) / 2;
+      const TARGET_FILL = mobileMode ? 0.41 : 0.65;
+      const phResults: BookLayout[] = [];
+      let phCursor = 0;
+      const phDims = PLACEHOLDER_TITLES.map(t => {
+        const h = mobileMode
+          ? VP_H_WU * TARGET_FILL * (heightVH(t) / AVG_VH_)
+          : screenH * heightVH(t) * SCALE;
+        return { h, w: h * COVER_ASPECT };
+      });
+      const phAvgW = phDims.reduce((s, d) => s + d.w, 0) / phDims.length;
+      const phProj = phAvgW * Math.cos(ANGLE_RAD) + SLAB_DEPTH * Math.sin(ANGLE_RAD);
+      const phStride = phProj * (mobileMode ? 0.62 : EXPOSE);
+      const phN = PLACEHOLDER_TITLES.length;
+      PLACEHOLDER_TITLES.forEach((title, i) => {
+        const { w, h } = phDims[i];
+        const t    = phN > 1 ? i / (phN - 1) : 0;
+        const deg  = ANGLE_MAX_DEG + (ANGLE_MIN_DEG - ANGLE_MAX_DEG) * t;
+        const rotY = deg * Math.PI / 180;
+        phResults.push({
+          id: `ph-${i}`, title, author: "", genre: "",
+          w, h, x: phCursor + w / 2, rotY,
+        });
+        phCursor += phStride + GAP;
+      });
+      const phMax = 0;
+      return { layouts: phResults, maxScroll: phMax, stride: phStride };
+    }
+
+    // ── Real book layout (below) ─────────────────────────────────────────────
     const results: BookLayout[] = [];
     let cursor = 0;
 
@@ -623,7 +775,8 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
       : 0;
     scrollState.current.max = max;
     return { layouts: results, maxScroll: max, stride };
-  }, [filteredBooks, screenH, mobileMode]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredBooks, screenH, mobileMode, isLoading]);
 
   // Nudge target — useFrame lerps pos toward it.
   // Also publishes the center-book index immediately after target is written —
@@ -650,6 +803,7 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       if (selectedRef.current) return; // freeze scroll when modal open
+      if (loadFractionRef.current < 1) return; // freeze scroll during loading animation
       const raw   = e.deltaY + e.deltaX;
       const delta = raw * SCALE * 0.8;
       nudge(delta);
@@ -785,8 +939,15 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
   return (
     <div
       ref={containerRef}
-      className="absolute inset-0"
-      style={{ background: "#E6E6E6" }}
+      style={{
+        position: "absolute",
+        top: 0, left: 0, right: 0,
+        // Mobile: lift the canvas bottom above the floating browser toolbar.
+        // svh-based offset scales with the device; safe-area-inset-bottom covers
+        // the home bar on top of that. No fixed pixels anywhere.
+        bottom: mobileMode ? "calc(env(safe-area-inset-bottom, 0px) + 10svh)" : 0,
+        background: "#e8e6e2",
+      }}
     >
       <Canvas
         frameloop="demand"             /* only renders on invalidate() */
@@ -800,7 +961,7 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
         }}
         style={{ width: "100%", height: "100%" }}
       >
-        <color attach="background" args={["#E6E6E6"]} />
+        <color attach="background" args={["#e8e6e2"]} />
         <ShelfScene
           layouts={layouts}
           stride={stride}
@@ -811,6 +972,7 @@ export function ShelfView({ mobileMode = false }: { mobileMode?: boolean }) {
           onClickBook={handleClick}
           onHoverBook={mobileMode ? () => {} : handleHover}
           mobileMode={mobileMode}
+          loadFractionRef={loadFractionRef}
         />
       </Canvas>
     </div>
