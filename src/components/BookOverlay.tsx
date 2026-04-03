@@ -282,14 +282,16 @@ export function BookOverlay({
           pointerEvents: "auto",
         }}
       >
-        {/* Transparent spacer — lets the 3D book show through.
-            Tap on this area dismisses the overlay. */}
+        {/* Transparent spacer — nearly full-screen so the 3D book is fully
+            visible when the modal first opens. Only the panel title peeks at
+            the bottom. Tap here to dismiss. Scroll down to read content. */}
         <div
-          style={{ height: "50svh", flexShrink: 0 }}
+          style={{ height: "calc(100svh - 80px)", flexShrink: 0 }}
           onClick={handleClose}
         />
 
-        {/* Panel — solid background, content flows naturally */}
+        {/* Panel — solid background, full natural height.
+            Sits below the spacer in the scroll flow. */}
         <div
           ref={contentRef}
           style={{
@@ -297,8 +299,8 @@ export function BookOverlay({
             display: "flex",
             justifyContent: "center",
             paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)",
-            // min-height ensures panel fills remaining viewport even for short synopses
-            minHeight: "50svh",
+            // min-height so short synopses still fill the screen after scrolling
+            minHeight: "100svh",
           }}
           onClick={e => e.stopPropagation()}
         >
