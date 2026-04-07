@@ -340,8 +340,11 @@ export function PageLoader({
                   borderRadius:    "2px 2px 0 0",
                   background:      NEUTRAL,
                   overflow:        "hidden",
-                  // Perspective per-element: each book rotates about its own Y axis,
-                  // matching Three.js where each book has local rotation
+                  // Starts invisible — revealed only once its cover image loads.
+                  // The slab (not the img) is the visibility gate so you never
+                  // see an empty grey book during the preload phase.
+                  opacity:         0,
+                  transition:      "opacity 0.38s ease",
                   transform:       `perspective(${perspPx}px) rotateY(${rotY}deg)`,
                   transformOrigin: "center bottom",
                 }}
@@ -352,7 +355,9 @@ export function PageLoader({
                     alt=""
                     draggable={false}
                     onLoad={e => {
-                      (e.currentTarget as HTMLImageElement).style.opacity = "1";
+                      // Reveal the slab (parent) when the cover is ready
+                      const slab = (e.currentTarget as HTMLImageElement).parentElement;
+                      if (slab) slab.style.opacity = "1";
                     }}
                     style={{
                       position:   "absolute",
@@ -360,14 +365,13 @@ export function PageLoader({
                       width:      "100%",
                       height:     "100%",
                       objectFit:  "cover",
-                      opacity:    0,
-                      transition: "opacity 0.38s ease",
                       userSelect: "none",
                     }}
                     ref={el => {
                       // Handle already-cached images where onLoad won't fire
                       if (el?.complete && el.naturalWidth > 0) {
-                        el.style.opacity = "1";
+                        const slab = el.parentElement;
+                        if (slab) slab.style.opacity = "1";
                       }
                     }}
                   />
