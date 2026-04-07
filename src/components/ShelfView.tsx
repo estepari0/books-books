@@ -105,27 +105,16 @@ function sampleEdgeColor(canvas: HTMLCanvasElement): THREE.Color {
   return c;
 }
 
-// Load image, create cover texture with SOFT EDGE FADE so the art dissolves
-// into the glass at its perimeter — the glass tint (= edge pixel colour) then
-// continues seamlessly across the spine.  No hard border, no assigned colour.
-function loadRoundedTexture(
+// ── Core canvas processing ────────────────────────────────────────────────────
+// Shared by loadRoundedTexture (real-time, per BookMesh) and prewarmCovers
+// (pre-load phase, before books mount).  Populates texCache + colorCache and
+// fires onDone when complete.  Safe to call outside a Three.js Canvas context.
+function processCoverUrl(
   url: string,
-  coverMat: THREE.MeshStandardMaterial,
-  glassMat: THREE.MeshPhysicalMaterial,
-  maxAnisotropy: number,
-  invalidate: () => void,
-) {
-  if (texCache.has(url)) {
-    coverMat.map = texCache.get(url)!;
-    coverMat.needsUpdate = true;
-    if (colorCache.has(url)) {
-      const col = colorCache.get(url)!;
-      glassMat.color.copy(col);
-      glassMat.needsUpdate = true;
-    }
-    invalidate();
-    return;
-  }
+  anisotropy: number,
+  onDone: () => void,
+): void {
+  if (texCache.has(url)) { onDone(); return; }
 
   const img = new Image();
   img.crossOrigin = "anonymous";
@@ -142,23 +131,17 @@ function loadRoundedTexture(
     // ── Edge pixel sampling (before the fade mask) ────────────────────────
     const col = sampleEdgeColor(canvas);
     colorCache.set(url, col);
-    glassMat.color.copy(col);
-    glassMat.needsUpdate = true;
 
     // ── Soft edge fade mask ───────────────────────────────────────────────
-    // Blur a rounded rectangle to produce a vignette that fades the cover
-    // art to transparent toward the perimeter.  The fade width matches the
-    // glass card border so the art dissolves RIGHT into the glass edge.
-    const FADE  = Math.round(Math.min(W, H) * 0.08); // 8% of shortest side
-    const R     = Math.max(4, Math.round(W * 0.05));  // corner radius for mask
-    const inset = Math.round(FADE * 0.55);            // pull rect inward to compensate blur expansion
+    const FADE  = Math.round(Math.min(W, H) * 0.08);
+    const R     = Math.max(4, Math.round(W * 0.05));
+    const inset = Math.round(FADE * 0.55);
 
     const mask  = document.createElement("canvas");
     mask.width  = W; mask.height = H;
     const mCtx  = mask.getContext("2d")!;
     mCtx.filter = `blur(${FADE}px)`;
     mCtx.fillStyle = "white";
-    // Draw inset rounded rect — blur expands it back out to full bounds
     const iW = W - inset * 2, iH = H - inset * 2;
     const ir = Math.max(1, R - inset);
     mCtx.beginPath();
@@ -171,7 +154,6 @@ function loadRoundedTexture(
     mCtx.fill();
     mCtx.filter = "none";
 
-    // Apply mask: destination-in clips + fades the drawn image
     ctx.globalCompositeOperation = "destination-in";
     ctx.drawImage(mask, 0, 0);
     ctx.globalCompositeOperation = "source-over";
@@ -181,16 +163,62 @@ function loadRoundedTexture(
     tex.colorSpace      = THREE.SRGBColorSpace;
     tex.minFilter       = THREE.LinearMipMapLinearFilter;
     tex.magFilter       = THREE.LinearFilter;
-    tex.anisotropy      = maxAnisotropy;
+    tex.anisotropy      = anisotropy;
     tex.generateMipmaps = true;
 
     evictTexIfNeeded();
     texCache.set(url, tex);
-    coverMat.map = tex;
+    onDone();
+  };
+  img.onerror = () => { onDone(); };
+  img.src = url;
+}
+
+// Pre-warm texCache + colorCache for a list of proxied cover URLs.
+// Call this before books mount so loadRoundedTexture gets a synchronous cache
+// hit and every book's entrance animation runs with its cover already applied.
+// Returns a Promise that resolves when all textures are processed.
+export function prewarmCovers(urls: string[]): Promise<void> {
+  const pending = urls.filter(u => !texCache.has(u));
+  if (pending.length === 0) return Promise.resolve();
+  return new Promise(resolve => {
+    let done = 0;
+    pending.forEach(url => {
+      processCoverUrl(url, 16, () => {
+        done++;
+        if (done === pending.length) resolve();
+      });
+    });
+  });
+}
+
+// Load cover texture and apply to materials — fast path when texCache is warm.
+// If the cache is cold (first load or eviction), processes asynchronously.
+function loadRoundedTexture(
+  url: string,
+  coverMat: THREE.MeshStandardMaterial,
+  glassMat: THREE.MeshPhysicalMaterial,
+  maxAnisotropy: number,
+  invalidate: () => void,
+) {
+  const applyFromCache = () => {
+    coverMat.map = texCache.get(url)!;
     coverMat.needsUpdate = true;
+    if (colorCache.has(url)) {
+      glassMat.color.copy(colorCache.get(url)!);
+      glassMat.needsUpdate = true;
+    }
     invalidate();
   };
-  img.src = url;
+
+  if (texCache.has(url)) {
+    applyFromCache();
+    return;
+  }
+
+  processCoverUrl(url, maxAnisotropy, () => {
+    applyFromCache();
+  });
 }
 
 // Placeholder texture with rounded corners — cached by title so filter changes

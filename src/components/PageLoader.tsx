@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import gsap from "gsap";
 import { useStore } from "@/store";
+import { prewarmCovers } from "@/components/ShelfView";
 
 // ── ShelfView geometry (must match ShelfView.tsx constants exactly) ───────────
 const CAM_Z     = 2.2;
@@ -209,14 +210,18 @@ export function PageLoader({
     // Set srcs immediately so images start loading and transition in as they arrive
     setSrcs([...group, ...group, ...group]);
 
-    // Preload in parallel — track per-image progress, exit when all settled
+    // 1. Preload images (network) — tracks progress counter
+    // 2. prewarmCovers — does canvas processing, fills texCache so Three.js
+    //    books find their textures synchronously on first mount (no grey state)
     preloadAll(group, (loaded, total) => {
       setProgress(Math.round((loaded / total) * 100));
-    }).then(() => {
-      if (!exitedRef.current) {
-        exitTimerRef.current = setTimeout(triggerExit, 380);
-      }
-    });
+    })
+      .then(() => prewarmCovers(group))
+      .then(() => {
+        if (!exitedRef.current) {
+          exitTimerRef.current = setTimeout(triggerExit, 380);
+        }
+      });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isReady, books]);
 
