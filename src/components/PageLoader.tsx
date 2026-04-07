@@ -24,14 +24,23 @@ function proxyCover(url: string) {
   return `/api/cover?url=${encodeURIComponent(url)}`;
 }
 
-// Preload a list of URLs, resolving when all are settled
-function preloadAll(urls: string[]): Promise<void> {
+// Preload a list of URLs, resolving when all are settled.
+// onProgress fires after each image settles, with (loaded, total).
+function preloadAll(
+  urls: string[],
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<void> {
+  let loaded = 0;
+  const total = urls.length;
   return Promise.all(
     urls.map(
       u => new Promise<void>(res => {
         const img = new Image();
-        img.onload  = () => res();
-        img.onerror = () => res();
+        img.onload = img.onerror = () => {
+          loaded++;
+          onProgress?.(loaded, total);
+          res();
+        };
         img.src = u;
       })
     )
@@ -125,6 +134,9 @@ export function PageLoader({
     () => Array(N_BASE * 3).fill(null)
   );
 
+  // 0–100 loading progress displayed in the overlay
+  const [progress, setProgress] = useState(0);
+
   const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Scroll loop — starts immediately on mount, before any data arrives ─────
@@ -197,8 +209,10 @@ export function PageLoader({
     // Set srcs immediately so images start loading and transition in as they arrive
     setSrcs([...group, ...group, ...group]);
 
-    // Also preload in parallel — once first group is fully ready, play exit hold
-    preloadAll(group).then(() => {
+    // Preload in parallel — track per-image progress, exit when all settled
+    preloadAll(group, (loaded, total) => {
+      setProgress(Math.round((loaded / total) * 100));
+    }).then(() => {
       if (!exitedRef.current) {
         exitTimerRef.current = setTimeout(triggerExit, 380);
       }
@@ -230,6 +244,34 @@ export function PageLoader({
         pointerEvents: "all",
       }}
     >
+      {/* Progress counter — visible once loading begins, centered in the open field above the strip */}
+      <div
+        style={{
+          position:      "absolute",
+          top:           0,
+          left:          0,
+          right:         0,
+          bottom:        initH,
+          display:       "flex",
+          alignItems:    "center",
+          justifyContent:"center",
+          pointerEvents: "none",
+        }}
+      >
+        <span
+          style={{
+            fontFamily:    "var(--font-sans)",
+            fontSize:      11,
+            letterSpacing: "0.08em",
+            color:         "#141412",
+            opacity:       progress > 0 ? 0.38 : 0,
+            transition:    "opacity 0.3s ease",
+          }}
+        >
+          {progress}%
+        </span>
+      </div>
+
       {/*
         THE STRIP — one element across all loader states:
           · starts compact at bottom (books clipped to ~40% visible)

@@ -607,10 +607,12 @@ function ShelfScene({
 export function ShelfView({
   mobileMode = false,
   isLoading  = false,
+  canSettle  = true,
   onReady,
 }: {
   mobileMode?: boolean;
   isLoading?:  boolean;
+  canSettle?:  boolean;
   onReady?:    () => void;
 }) {
   const containerRef    = useRef<HTMLDivElement>(null);
@@ -663,7 +665,7 @@ export function ShelfView({
   // loadFractionRef from 0 → 1; ShelfScene.useFrame reads it each frame and
   // applies the group transform (scale + Y). onReady fires when done.
   useEffect(() => {
-    if (isLoading || filteredBooks.length === 0 || loadStartedRef.current) return;
+    if (isLoading || !canSettle || filteredBooks.length === 0 || loadStartedRef.current) return;
     loadStartedRef.current = true;
 
     // Books sit at the compact position for a moment, then settle unhurried
@@ -675,7 +677,7 @@ export function ShelfView({
       onUpdate:   () => { invalidateRef.current?.(); },
       onComplete: () => { onReadyRef.current?.(); },
     });
-  }, [isLoading, filteredBooks.length]);
+  }, [isLoading, canSettle, filteredBooks.length]);
 
   // Book layouts in world-space (X only — group handles viewport offset)
   const { layouts, stride } = useMemo(() => {

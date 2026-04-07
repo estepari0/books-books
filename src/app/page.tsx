@@ -8,6 +8,7 @@ import { FilterBar }   from "@/components/FilterBar";
 import { DataPanel }   from "@/components/DataPanel";
 import { DataView }    from "@/components/DataView";
 import { MobileLayout } from "@/components/MobileLayout";
+import { PageLoader }  from "@/components/PageLoader";
 import { useStore }    from "@/store";
 
 export default function Home() {
@@ -32,6 +33,11 @@ export default function Home() {
   // entrances play fresh right as the shelf reaches its final position.
   const [loaderDone, setLoaderDone] = useState(false);
 
+  // ── pageLoaderDone: true once PageLoader has preloaded cover images ────────
+  // ShelfView's settle animation is gated behind this so the shelf only
+  // slides into position after covers are ready — no per-cover pop-in.
+  const [pageLoaderDone, setPageLoaderDone] = useState(false);
+
   // Mobile renders its own layout immediately — it has its own ShelfView
   // and doesn't depend on the desktop loaderDone gate at all.
   if (isMobile) return <MobileLayout />;
@@ -55,16 +61,25 @@ export default function Home() {
   return (
     <>
       {/*
-        ShelfView renders immediately and IS the loading experience.
-        During isLoading: 8 placeholder books appear at compact/centered position.
-        When data arrives: all books animate down to the final shelf position.
-        onReady fires when the settle animation completes → FilterBar/DataPanel mount.
+        ShelfView renders immediately underneath the PageLoader overlay.
+        PageLoader preloads cover images and shows 0–100% progress.
+        Once PageLoader fades out, the shelf settles into position with
+        covers already loaded — no individual cover pop-in.
       */}
       <DesktopApp
         isLoading={isLoading}
         loaderDone={loaderDone}
+        canSettle={pageLoaderDone}
         onReady={() => setLoaderDone(true)}
       />
+
+      {/* PageLoader sits above everything; onDone unblocks the shelf settle */}
+      {!pageLoaderDone && (
+        <PageLoader
+          isReady={!isLoading}
+          onDone={() => setPageLoaderDone(true)}
+        />
+      )}
     </>
   );
 }
@@ -73,10 +88,12 @@ export default function Home() {
 function DesktopApp({
   isLoading,
   loaderDone,
+  canSettle,
   onReady,
 }: {
   isLoading:  boolean;
   loaderDone: boolean;
+  canSettle:  boolean;
   onReady:    () => void;
 }) {
   const activeView = useStore(s => s.activeView);
@@ -119,6 +136,7 @@ function DesktopApp({
       >
         <ShelfView
           isLoading={isLoading}
+          canSettle={canSettle}
           onReady={onReady}
         />
         {loaderDone && activeView === "shelf" && <BookOverlay />}
