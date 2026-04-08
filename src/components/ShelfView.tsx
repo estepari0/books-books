@@ -329,7 +329,7 @@ const LIFT   = 0.35; // world units up
 // books settle left-to-right like a single ripple of energy.
 function BookMesh({
   layout, yBottom, xStart, scrollX, stride, index, totalBooks,
-  hoveredId, selectedId, onClickBook, onHoverBook, mobileMode, entranceDelay,
+  hoveredId, selectedId, onClickBook, onHoverBook, mobileMode, entranceDelay, canEnter,
 }: {
   layout: BookLayout;
   yBottom: number;
@@ -343,7 +343,8 @@ function BookMesh({
   onClickBook: (id: string) => void;
   onHoverBook: (id: string | null) => void;
   mobileMode: boolean;
-  entranceDelay: number; // seconds — book materialises after this delay on mount
+  entranceDelay: number;
+  canEnter: boolean; // gate — entrance tween fires only after the loader clears
 }) {
   const { gl, invalidate, viewport } = useThree();
   const maxAniso       = useMemo(() => gl.capabilities.getMaxAnisotropy(), [gl]);
@@ -384,9 +385,11 @@ function BookMesh({
     loadRoundedTexture(layout.coverUrl, coverMat, glassMat, maxAniso, invalidate);
   }, [layout.coverUrl, coverMat, glassMat, maxAniso, invalidate]);
 
-  // Per-book entrance: scale + opacity 0 → 1 with a staggered delay.
-  // Because textures are pre-warmed, books materialise already textured.
+  // Per-book entrance: fires once canEnter becomes true (loader has cleared).
+  // Staggered delay builds the carousel left-to-right with textures pre-warmed,
+  // so every book materialises already textured from its very first frame.
   useEffect(() => {
+    if (!canEnter) return;
     const tween = gsap.to(entranceFracRef, {
       current:  1,
       duration: 0.7,
@@ -395,9 +398,8 @@ function BookMesh({
       onUpdate: () => { invalidate(); },
     });
     return () => { tween.kill(); };
-  // entranceDelay and invalidate are stable on mount
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [canEnter]);
 
   // Dispose GPU resources on unmount — prevents VRAM leaking as filter results change.
   // Materials are always safe to dispose (they hold no shared data).
@@ -553,7 +555,7 @@ const LOAD_Y_FRAC = 0.22;   // group starts 22% of VP height above its final res
 
 function ShelfScene({
   layouts, stride, scrollX, invalidateRef, hoveredId, selectedId,
-  onClickBook, onHoverBook, mobileMode, loadFractionRef,
+  onClickBook, onHoverBook, mobileMode, loadFractionRef, canSettle,
 }: {
   layouts: BookLayout[];
   stride: number;
@@ -565,6 +567,7 @@ function ShelfScene({
   onHoverBook: (id: string | null) => void;
   mobileMode: boolean;
   loadFractionRef: React.MutableRefObject<number>;
+  canSettle: boolean;
 }) {
   const { viewport, invalidate } = useThree();
   const groupRef  = useRef<THREE.Group>(null);
@@ -624,6 +627,7 @@ function ShelfScene({
             onHoverBook={onHoverBook}
             mobileMode={mobileMode}
             entranceDelay={i * Math.min(0.14, 1.8 / Math.max(1, n - 1))}
+            canEnter={canSettle}
           />
         ))}
       </group>
@@ -1006,6 +1010,7 @@ export function ShelfView({
           onHoverBook={mobileMode ? () => {} : handleHover}
           mobileMode={mobileMode}
           loadFractionRef={loadFractionRef}
+          canSettle={canSettle}
         />
       </Canvas>
     </div>
