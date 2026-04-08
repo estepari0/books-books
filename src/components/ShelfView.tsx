@@ -377,29 +377,25 @@ function BookMesh({
     [],
   );
 
-  // Entrance tween — called once the cover texture is applied so the book
-  // fades in already textured, never as a plain grey slab.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const startEntrance = useCallback(() => {
-    gsap.to(entranceFracRef, {
+  // Load real texture — texCache is pre-warmed by PageLoader so this is a
+  // synchronous cache hit on first load: texture + glass tint applied immediately.
+  useEffect(() => {
+    if (!layout.coverUrl) return;
+    loadRoundedTexture(layout.coverUrl, coverMat, glassMat, maxAniso, invalidate);
+  }, [layout.coverUrl, coverMat, glassMat, maxAniso, invalidate]);
+
+  // Per-book entrance: scale + opacity 0 → 1 with a staggered delay.
+  // Because textures are pre-warmed, books materialise already textured.
+  useEffect(() => {
+    const tween = gsap.to(entranceFracRef, {
       current:  1,
       duration: 0.7,
       ease:     "power2.out",
       delay:    entranceDelay,
       onUpdate: () => { invalidate(); },
     });
-  // entranceDelay and invalidate are stable at mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Load real texture, tint glass, then start entrance.
-  // If there's no cover URL, start entrance immediately (grey slab is fine).
-  useEffect(() => {
-    if (!layout.coverUrl) {
-      startEntrance();
-      return;
-    }
-    loadRoundedTexture(layout.coverUrl, coverMat, glassMat, maxAniso, invalidate, startEntrance);
+    return () => { tween.kill(); };
+  // entranceDelay and invalidate are stable on mount
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -642,10 +638,12 @@ function ShelfScene({
 export function ShelfView({
   mobileMode = false,
   isLoading  = false,
+  canSettle  = true,
   onReady,
 }: {
   mobileMode?: boolean;
   isLoading?:  boolean;
+  canSettle?:  boolean;
   onReady?:    () => void;
 }) {
   const containerRef    = useRef<HTMLDivElement>(null);
@@ -698,7 +696,7 @@ export function ShelfView({
   // loadFractionRef from 0 → 1; ShelfScene.useFrame reads it each frame and
   // applies the group transform (scale + Y). onReady fires when done.
   useEffect(() => {
-    if (isLoading || filteredBooks.length === 0 || loadStartedRef.current) return;
+    if (isLoading || !canSettle || filteredBooks.length === 0 || loadStartedRef.current) return;
     loadStartedRef.current = true;
 
     // Books sit at the compact position for a moment, then settle unhurried
@@ -710,7 +708,7 @@ export function ShelfView({
       onUpdate:   () => { invalidateRef.current?.(); },
       onComplete: () => { onReadyRef.current?.(); },
     });
-  }, [isLoading, filteredBooks.length]);
+  }, [isLoading, canSettle, filteredBooks.length]);
 
   // Book layouts in world-space (X only — group handles viewport offset)
   const { layouts, stride } = useMemo(() => {
