@@ -24,13 +24,18 @@ Changes in Notion can take up to about an hour to show on the site. Redeploying 
 
 ## Adding books (routine)
 
-1. In Notion, add the book and fill in Title, Author, Genre, Origin, Gender, Format, Published, Year and Date Read. Use the dropdowns for the select fields.
+1. In Notion, add the book and fill in Title, Author, Genre, Origin, Gender, Format, Published, Year and Date Read. Use the dropdowns for the select fields. Fill in **Author** before looking for covers: the cover search needs it.
 2. Find covers for any books that don't have one:
    ```bash
    npm run covers:preview   # shows what each book would be matched to; writes nothing
    npm run covers           # saves the covers to Notion
    ```
-   Read the preview first: the script takes the first search hit, which is sometimes the wrong edition or a different book. It only fills empty covers and never overwrites existing ones. Fix bad matches by hand in the "Thumbnail url" field.
+   Read the preview first. A wrong cover is worse than none, so the script is strict:
+   - A book with an **empty Author** is skipped. Searching by title alone often finds a different book. Fill in Author and run again. (For an anonymous work, add `-- --include-no-author`, as in `npm run covers:preview -- --include-no-author`.)
+   - A match is only accepted if it shares a surname with your Author. Otherwise it is listed as "needs review" and **not saved**. A misspelled Author in Notion lands here too, so check the spelling.
+   - Existing covers are never overwritten.
+
+   An accepted match can still be a different edition, such as a translation, so look at the matched title and author the preview prints. For anything that was not saved, fix Author in Notion and run again, or paste a cover image URL into the "Thumbnail url" field by hand.
 3. Fill in Brief and Quotes whenever you like.
 
 ## Notion token
