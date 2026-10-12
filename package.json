@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "covers": "node scripts/fetch-covers.mjs",
+    "covers:preview": "node scripts/fetch-covers.mjs --dry-run"
   },
   "dependencies": {
     "@react-three/drei": "^10.0.5",

@@ -3,16 +3,52 @@
  * fetch-covers.mjs
  * Finds all books in Notion missing a "Thumbnail url", tries Google Books
  * then Open Library, and patches the Notion page with the found URL.
+ * Books that already have a cover are never touched.
  *
- * Run from project root:
- *   node scripts/fetch-covers.mjs
+ * Usage (from the project root):
+ *   npm run covers:preview   # preview only, writes nothing
+ *   npm run covers           # write covers to Notion
+ *
+ * The token is read from NOTION_TOKEN in the environment, or else from
+ * .env.local in the project root (see .env.local.example). An explicit
+ * environment variable always wins over the file.
+ *
+ * The preview prints which book each cover was matched to, so you can spot
+ * wrong matches (wrong edition, different book) before anything is saved.
  */
+
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Load KEY=value lines from .env.local / .env without overriding the environment.
+function loadEnvFiles() {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  for (const name of [".env.local", ".env"]) {
+    const file = resolve(root, name);
+    if (!existsSync(file)) continue;
+    for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
+      const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+      if (!m) continue;
+      let value = m[2];
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      if (process.env[m[1]] === undefined) process.env[m[1]] = value;
+    }
+  }
+}
+loadEnvFiles();
 
 const NOTION_TOKEN   = process.env.NOTION_TOKEN;
 if (!NOTION_TOKEN) {
-  console.error("❌ NOTION_TOKEN env var not set. Run with: NOTION_TOKEN=your_token node scripts/fetch-covers.mjs");
+  console.error("❌ NOTION_TOKEN not found. Add it to .env.local in the project root (copy .env.local.example), or export it in your shell.");
   process.exit(1);
 }
+const DRY_RUN        = process.argv.includes("--dry-run");
 const DATABASE_ID    = "79ddcf35-ec93-4f94-9ac0-b45aedc44b29";
 const NOTION_VERSION = "2022-06-28";
 const NOTION_API     = "https://api.notion.com/v1";
@@ -36,7 +72,7 @@ function getUrl(prop) {
 function getTitleProp(props) {
   return (
     props["Title"] ??
-    props["\uFEFFTitle"] ??
+    props["﻿Title"] ??
     Object.values(props).find(p => p.type === "title")
   );
 }
@@ -90,20 +126,24 @@ async function fetchAllBooks() {
 }
 
 // ── Cover sources ──────────────────────────────────────────────────────────────
+// Each returns { url, matched } or undefined. `matched` is the title/author the
+// source actually returned, shown in the output so wrong matches are visible.
 
 async function tryGoogleBooks(title, author) {
   try {
     const q   = encodeURIComponent(`intitle:${title}${author ? ` inauthor:${author}` : ""}`);
     const res = await fetch(
-      `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=3&fields=items(volumeInfo/imageLinks,volumeInfo/title)`,
+      `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=3&fields=items(volumeInfo/imageLinks,volumeInfo/title,volumeInfo/authors)`,
     );
     if (!res.ok) return undefined;
-    const data = await res.json();
-    const thumb = data.items?.[0]?.volumeInfo?.imageLinks?.thumbnail
-               ?? data.items?.[0]?.volumeInfo?.imageLinks?.smallThumbnail;
-    return thumb
-      ? thumb.replace("http://", "https://").replace("zoom=1", "zoom=2")
-      : undefined;
+    const data  = await res.json();
+    const info  = data.items?.[0]?.volumeInfo;
+    const thumb = info?.imageLinks?.thumbnail ?? info?.imageLinks?.smallThumbnail;
+    if (!thumb) return undefined;
+    return {
+      url:     thumb.replace("http://", "https://").replace("zoom=1", "zoom=2"),
+      matched: `${info.title ?? "?"}${info.authors ? " — " + info.authors.join(", ") : ""}`,
+    };
   } catch { return undefined; }
 }
 
@@ -111,14 +151,16 @@ async function tryOpenLibrary(title, author) {
   try {
     const q   = encodeURIComponent(`${title}${author ? ` ${author}` : ""}`);
     const res = await fetch(
-      `https://openlibrary.org/search.json?q=${q}&limit=3&fields=key,cover_i`,
+      `https://openlibrary.org/search.json?q=${q}&limit=3&fields=key,title,author_name,cover_i`,
     );
     if (!res.ok) return undefined;
     const data = await res.json();
-    const coverId = data.docs?.find(d => d.cover_i)?.cover_i;
-    return coverId
-      ? `https://covers.openlibrary.org/b/id/${coverId}-L.jpg`
-      : undefined;
+    const doc  = data.docs?.find(d => d.cover_i);
+    if (!doc) return undefined;
+    return {
+      url:     `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg`,
+      matched: `${doc.title ?? "?"}${doc.author_name ? " — " + doc.author_name.join(", ") : ""}`,
+    };
   } catch { return undefined; }
 }
 
@@ -144,7 +186,9 @@ async function patchCover(pageId, url) {
 // ── Main ───────────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log("📚 Fetching books without covers from Notion…");
+  console.log(DRY_RUN
+    ? "📚 DRY RUN — nothing will be written to Notion"
+    : "📚 Fetching books without covers from Notion…");
   const missing = await fetchAllBooks();
   console.log(`\n→ ${missing.length} books need covers\n`);
 
@@ -162,21 +206,31 @@ async function main() {
 
     await Promise.all(batch.map(async book => {
       // Try Google Books first, then Open Library
-      let url = await tryGoogleBooks(book.title, book.author);
-      const source = url ? "Google" : "OpenLib";
-      if (!url) url = await tryOpenLibrary(book.title, book.author);
+      let hit    = await tryGoogleBooks(book.title, book.author);
+      let source = "Google";
+      if (!hit) {
+        hit    = await tryOpenLibrary(book.title, book.author);
+        source = "OpenLib";
+      }
 
-      if (url) {
-        try {
-          await patchCover(book.id, url);
-          console.log(`  ✅ [${source}] ${book.title}`);
-          filled++;
-        } catch (err) {
-          console.error(`  ❌ Notion patch failed: ${book.title} — ${err.message}`);
-          failed++;
-        }
-      } else {
+      if (!hit) {
         console.log(`  ⚠️  No cover found: ${book.title} (${book.author})`);
+        failed++;
+        return;
+      }
+
+      if (DRY_RUN) {
+        console.log(`  🔎 [${source}] "${book.title}" → matched "${hit.matched}"`);
+        filled++;
+        return;
+      }
+
+      try {
+        await patchCover(book.id, hit.url);
+        console.log(`  ✅ [${source}] ${book.title}  (matched: ${hit.matched})`);
+        filled++;
+      } catch (err) {
+        console.error(`  ❌ Notion patch failed: ${book.title} — ${err.message}`);
         failed++;
       }
     }));
@@ -185,7 +239,9 @@ async function main() {
     if (i + BATCH < missing.length) await new Promise(r => setTimeout(r, 300));
   }
 
-  console.log(`\n✅ Done — ${filled} covers saved, ${failed} not found`);
+  console.log(DRY_RUN
+    ? `\n🔎 Dry run done — ${filled} would be saved, ${failed} not found. Nothing was written.`
+    : `\n✅ Done — ${filled} covers saved, ${failed} not found`);
 }
 
 main().catch(err => {
