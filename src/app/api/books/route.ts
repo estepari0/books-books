@@ -106,6 +106,9 @@ async function fetchAllBooks(token: string): Promise<Book[]> {
         brief:     getText(props['Brief']) || undefined,
         quotes:    getText(props['Quotes']) || undefined,
         coverUrl:  getUrl(props['Thumbnail url']) || undefined,
+        // Optional Number field. Missing field or empty cell → undefined (never 0).
+        pages:     typeof props['Pages']?.number === 'number' && props['Pages'].number > 0
+                     ? props['Pages'].number : undefined,
       };
 
       books.push(book);

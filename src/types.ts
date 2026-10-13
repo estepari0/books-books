@@ -12,4 +12,6 @@ export interface Book {
   brief?: string;
   quotes?: string;
   coverUrl?: string;
+  /** Approximate page count from Notion "Pages". Undefined when not known. */
+  pages?: number;
 }
