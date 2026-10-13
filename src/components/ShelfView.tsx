@@ -59,7 +59,32 @@ function computeVP() {
   return { w: h * aspect, h };
 }
 
-// Variable height from title hash
+// ─── Book shape from the real cover ──────────────────────────────────────────
+// Every book has the same width; its height comes from its own cover image's
+// proportions (width ÷ height), measured when the image is decoded.  A tall,
+// narrow cover makes a tall book; a square art-book cover makes a short one.
+// This is shape, not physical size: a pocket edition and a hardcover with the
+// same proportions look the same.  Until the image is known (or when there is
+// no cover) the book uses the standard 2:3 COVER_ASPECT.
+const ASPECT_MIN     = 0.55;  // clamp: narrower covers would outgrow the tallest books the layout was tuned for (~1.2× average)
+const ASPECT_MAX     = 1.30;  // clamp: landscape covers
+const MIN_COVER_PX   = 40;    // smaller images are placeholders (Open Library returns 1×1 for "no cover")
+
+const aspectCache     = new Map<string, number>(); // proxied cover URL → width/height (never evicted; tiny)
+const aspectListeners = new Set<() => void>();
+
+function recordAspect(url: string, w: number, h: number) {
+  if (w < MIN_COVER_PX || h < MIN_COVER_PX || aspectCache.has(url)) return;
+  aspectCache.set(url, Math.min(Math.max(w / h, ASPECT_MIN), ASPECT_MAX));
+  aspectListeners.forEach(fn => fn());
+}
+
+function coverAspect(proxiedUrl?: string): number {
+  return (proxiedUrl && aspectCache.get(proxiedUrl)) || COVER_ASPECT;
+}
+
+// Variable height from title hash — used ONLY for the grey loading placeholders,
+// which are not real books.  Real books get their height from coverAspect().
 function heightVH(title: string): number {
   let h = 0;
   for (let i = 0; i < title.length; i++) h = ((h << 5) - h + title.charCodeAt(i)) | 0;
@@ -147,6 +172,7 @@ function processCoverUrl(
   img.onload = () => {
     const W = img.naturalWidth  || 256;
     const H = img.naturalHeight || 384;
+    recordAspect(url, img.naturalWidth, img.naturalHeight);
 
     // Draw raw image first (no clip) so we can sample edge pixels
     const canvas = document.createElement("canvas");
@@ -741,6 +767,22 @@ export function ShelfView({
     });
   }, [isLoading, canSettle, filteredBooks.length]);
 
+  // Re-run the layout when cover proportions arrive (they're measured as each
+  // image decodes).  Batched to one update per animation frame.
+  const [aspectVersion, setAspectVersion] = useState(0);
+  useEffect(() => {
+    let raf: number | null = null;
+    const onAspect = () => {
+      if (raf !== null) return;
+      raf = requestAnimationFrame(() => { raf = null; setAspectVersion(v => v + 1); });
+    };
+    aspectListeners.add(onAspect);
+    return () => {
+      aspectListeners.delete(onAspect);
+      if (raf !== null) cancelAnimationFrame(raf);
+    };
+  }, []);
+
   // Book layouts in world-space (X only — group handles viewport offset)
   const { layouts, stride } = useMemo(() => {
     const vp = computeVP();
@@ -783,12 +825,12 @@ export function ShelfView({
     const results: BookLayout[] = [];
     let cursor = 0;
 
-    // Mobile: size books directly in world units so they always fill ~65% of
-    // the canvas height — independent of window.innerHeight or canvas pixel size.
+    // Reference size: a standard 2:3 book is avgBookH tall.
+    //   Mobile: in world units, so a 2:3 book fills TARGET_FILL of the canvas
+    //   height — independent of window.innerHeight or canvas pixel size.
+    //   Desktop: from screen height (AVG_VH = midpoint of the old height range,
+    //   kept so the overall scale of the shelf doesn't change).
     //   VP_H_WU  = camera-based viewport height in world units (constant).
-    //   AVG_VH   = midpoint of the title-hash height range.
-    // Normalising by AVG_VH makes the average book exactly TARGET_FILL tall;
-    // individual books vary ±(MAX_VH−MIN_VH)/2 / AVG_VH ≈ ±20% around that.
     const VP_H_WU  = 2 * Math.tan((CAM_FOV / 2) * Math.PI / 180) * CAM_Z; // ≈ 2.052
     const AVG_VH   = (MIN_VH + MAX_VH) / 2; // ≈ 0.2455
     const TARGET_FILL = mobileMode ? 0.41 : 0.65; // mobile: ~41% canvas height (÷2); desktop: 65%
@@ -796,11 +838,13 @@ export function ShelfView({
     // Average book height in world units — the reference for spine depth.
     const avgBookH = mobileMode ? VP_H_WU * TARGET_FILL : screenH * AVG_VH * SCALE;
 
+    // Same width for every book (that of a standard 2:3 book of average
+    // height); height follows the book's own cover proportions.
+    const bookW = avgBookH * COVER_ASPECT;
     const dims = filteredBooks.map(book => {
-      const h = mobileMode
-        ? VP_H_WU * TARGET_FILL * (heightVH(book.title) / AVG_VH)
-        : screenH * heightVH(book.title) * SCALE;
-      return { h, w: h * COVER_ASPECT, d: spineDepth(book.pages, avgBookH) };
+      const w = bookW;
+      const h = w / coverAspect(proxyCover(book.coverUrl));
+      return { h, w, d: spineDepth(book.pages, avgBookH) };
     });
 
     const avgW = dims.length ? dims.reduce((s, d) => s + d.w, 0) / dims.length : 0.5;
@@ -849,7 +893,7 @@ export function ShelfView({
     scrollState.current.max = max;
     return { layouts: results, maxScroll: max, stride };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredBooks, screenH, mobileMode, isLoading]);
+  }, [filteredBooks, screenH, mobileMode, isLoading, aspectVersion]);
 
   // Nudge target — useFrame lerps pos toward it.
   // Also publishes the center-book index immediately after target is written —
