@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "covers": "node scripts/fetch-covers.mjs",
-    "covers:preview": "node scripts/fetch-covers.mjs --dry-run"
+    "covers:preview": "node scripts/fetch-covers.mjs --dry-run",
+    "pages": "node scripts/fetch-pages.mjs",
+    "pages:preview": "node scripts/fetch-pages.mjs --dry-run"
   },
   "dependencies": {
     "@react-three/drei": "^10.0.5",

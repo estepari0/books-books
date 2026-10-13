@@ -14,7 +14,7 @@ const COVER_ASPECT   = 0.667;
 const ANGLE_MAX_DEG  = 40;   // leftmost book rotation
 const ANGLE_MIN_DEG  = 10;   // rightmost book rotation
 const ANGLE_RAD      = ANGLE_MAX_DEG * Math.PI / 180; // used for stride calc
-const SLAB_DEPTH     = 0.013;   // glass card thickness (was 0.018, −30%)
+const SLAB_DEPTH     = 0.013;   // glass card thickness (was 0.018, −30%) — also the spine of a book with no page count
 const CARD_RADIUS    = 0.006;   // rounded corners on the card geometry (world units)
 const CARD_SEGMENTS  = 3;       // smoothness of the rounding arcs
 const EXPOSE         = 0.34;    // was 0.42 — tighter packing (≈20% less stride)
@@ -24,6 +24,32 @@ const CAM_Z          = 2.2;
 const CAM_FOV        = 50;
 const EDGE_ZONE      = 220;
 const MAX_EDGE_SPEED = 0.05;
+
+// ─── Spine thickness from page count ────────────────────────────────────────
+// Depth comes from the Notion "Pages" field, nothing is hard-wired per book.
+// It scales with the AVERAGE book height, not each book's own height: book
+// heights are decorative (title hash), so tying depth to them would mix noise
+// into the data.  A book with no page count keeps the thin SLAB_DEPTH card.
+//   depth = clamp(pages) × PAGE_DEPTH_RATIO × SPINE_SCALE × averageBookHeight
+const PAGES_MIN        = 40;      // shorter books get this spine (still readable)
+const PAGES_MAX        = 1000;    // longer books are capped here (doorstops don't eat the shelf)
+const PAGE_DEPTH_RATIO = 0.00033; // real paper ≈ 0.065 mm per page on a ~200 mm tall book
+const SPINE_SCALE      = 0.6;     // 1 = true-to-life proportion; lower = slimmer, calmer shelf
+const SPINE_CLEARANCE  = 0.004;   // min air between neighbouring slabs (world units)
+
+function spineDepth(pages: number | undefined, avgH: number): number {
+  if (!pages || pages <= 0) return SLAB_DEPTH;
+  const p = Math.min(Math.max(pages, PAGES_MIN), PAGES_MAX);
+  return Math.max(SLAB_DEPTH, p * PAGE_DEPTH_RATIO * SPINE_SCALE * avgH);
+}
+
+// Distance along the shelf so two neighbouring slabs, both rotated about Y,
+// don't intersect: their offset along the depth axis (dx·sinθ) must cover half
+// of each depth.  Uses the smaller angle of the pair (the tighter case).
+function minSpacing(dA: number, dB: number, rotA: number, rotB: number): number {
+  const sin = Math.max(Math.sin(Math.min(rotA, rotB)), 0.05);
+  return ((dA + dB) / 2 + SPINE_CLEARANCE) / sin;
+}
 
 // Pre-compute viewport size from camera params (SSR-safe — no window default args)
 function computeVP() {
@@ -316,6 +342,7 @@ const PLACEHOLDER_TITLES = [
 interface BookLayout {
   id: string; title: string; author: string; genre: string; coverUrl?: string;
   w: number; h: number;
+  d: number;    // slab depth = spine thickness (world units), from page count
   x: number;    // layout-space center X (group handles viewport offset)
   rotY: number; // per-book Y rotation in radians (left = most, right = least)
 }
@@ -531,7 +558,7 @@ function BookMesh({
       {/* Glass card — rounded corners, uniform translucent plastic */}
       <mesh material={glassMat}>
         <RoundedBoxGeo
-          args={[layout.w, layout.h, SLAB_DEPTH]}
+          args={[layout.w, layout.h, layout.d]}
           radius={CARD_RADIUS}
           smoothness={CARD_SEGMENTS}
         />
@@ -539,7 +566,7 @@ function BookMesh({
 
       {/* Cover art — flat plane flush against front face */}
       <mesh
-        position={[0, 0, SLAB_DEPTH / 2 + 0.0001]}
+        position={[0, 0, layout.d / 2 + 0.0001]}
         material={coverMat}
       >
         <planeGeometry args={[coverW, coverH]} />
@@ -744,7 +771,7 @@ export function ShelfView({
         const rotY = deg * Math.PI / 180;
         phResults.push({
           id: `ph-${i}`, title, author: "", genre: "",
-          w, h, x: phCursor + w / 2, rotY,
+          w, h, d: SLAB_DEPTH, x: phCursor + w / 2, rotY,
         });
         phCursor += phStride + GAP;
       });
@@ -766,11 +793,14 @@ export function ShelfView({
     const AVG_VH   = (MIN_VH + MAX_VH) / 2; // ≈ 0.2455
     const TARGET_FILL = mobileMode ? 0.41 : 0.65; // mobile: ~41% canvas height (÷2); desktop: 65%
 
+    // Average book height in world units — the reference for spine depth.
+    const avgBookH = mobileMode ? VP_H_WU * TARGET_FILL : screenH * AVG_VH * SCALE;
+
     const dims = filteredBooks.map(book => {
       const h = mobileMode
         ? VP_H_WU * TARGET_FILL * (heightVH(book.title) / AVG_VH)
         : screenH * heightVH(book.title) * SCALE;
-      return { h, w: h * COVER_ASPECT };
+      return { h, w: h * COVER_ASPECT, d: spineDepth(book.pages, avgBookH) };
     });
 
     const avgW = dims.length ? dims.reduce((s, d) => s + d.w, 0) / dims.length : 0.5;
@@ -781,24 +811,30 @@ export function ShelfView({
     const stride     = projected * EXPOSE_VAL;
 
     const n = filteredBooks.length;
+    // Rotation gradient: leftmost (i=0) at max angle, rightmost (i=n-1) at min.
+    // t goes 0→1 left to right; interpolate degrees then convert.
+    const rotAt = (i: number) => {
+      const t = n > 1 ? i / (n - 1) : 0;
+      return (ANGLE_MAX_DEG + (ANGLE_MIN_DEG - ANGLE_MAX_DEG) * t) * Math.PI / 180;
+    };
     filteredBooks.forEach((book, i) => {
-      const { w, h } = dims[i];
-      // Rotation gradient: leftmost (i=0) at max angle, rightmost (i=n-1) at min.
-      // t goes 0→1 left to right; interpolate degrees then convert.
-      const t    = n > 1 ? i / (n - 1) : 0;
-      const deg  = ANGLE_MAX_DEG + (ANGLE_MIN_DEG - ANGLE_MAX_DEG) * t;
-      const rotY = deg * Math.PI / 180;
+      const { w, h, d } = dims[i];
+      const rotY = rotAt(i);
       results.push({
         id:       book.id,
         title:    book.title,
         author:   book.author,
         genre:    book.genre,
         coverUrl: proxyCover(book.coverUrl),
-        w, h,
+        w, h, d,
         x: cursor + w / 2,
         rotY,
       });
-      cursor += stride + GAP;
+      // Thin books keep the usual stride; thick neighbours push apart just
+      // enough not to intersect.  With no page data this equals stride + GAP.
+      const next = i + 1 < n ? dims[i + 1] : undefined;
+      const step = next ? Math.max(stride + GAP, minSpacing(d, next.d, rotY, rotAt(i + 1))) : stride + GAP;
+      cursor += step;
     });
 
     // maxScroll: scroll far enough that the last book's right edge sits at
@@ -826,11 +862,19 @@ export function ShelfView({
     const { target, max } = scrollState.current;
     const n = filteredBooks.length;
     if (n > 0 && max > 0) {
-      setShelfScrollIndex(
-        Math.max(0, Math.min(Math.round((target / max) * (n - 1)), n - 1))
-      );
+      // Spacing is no longer uniform (thick spines push neighbours apart), so
+      // map the scroll fraction to a position along the row and pick the book
+      // nearest to it, rather than assuming equal steps.
+      const first = layouts[0]?.x ?? 0;
+      const last  = layouts[layouts.length - 1]?.x ?? 0;
+      const xAt   = first + (target / max) * (last - first);
+      let best = 0;
+      for (let i = 1; i < layouts.length; i++) {
+        if (Math.abs(layouts[i].x - xAt) < Math.abs(layouts[best].x - xAt)) best = i;
+      }
+      setShelfScrollIndex(Math.max(0, Math.min(best, n - 1)));
     }
-  }, [filteredBooks.length, setShelfScrollIndex]);
+  }, [filteredBooks.length, layouts, setShelfScrollIndex]);
 
   // Wheel + throw on lift-off (desktop only — mobile uses touch below)
   useEffect(() => {
