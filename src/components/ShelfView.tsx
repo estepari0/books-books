@@ -2,25 +2,27 @@
 
 import { useRef, useEffect, useMemo, useState, useCallback } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { RoundedBoxGeometry as RoundedBoxGeo } from "@react-three/drei";
 import * as THREE from "three";
 import gsap from "gsap";
 import { useStore } from "@/store";
+import {
+  createBookMaterials, applyCoverColor, setBookOpacity, disposeBookMaterials,
+  LIGHTS, SHADOW_OPACITY, type BookMaterials,
+} from "@/lib/bookObject";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const MIN_VH         = 0.202;  // −15 %
 const MAX_VH         = 0.289;  // −15 %
 const COVER_ASPECT   = 0.667;
 const ANGLE_MAX_DEG  = 40;   // leftmost book rotation
-const ANGLE_MIN_DEG  = 10;   // rightmost book rotation
+const ANGLE_MIN_DEG  = 18;   // rightmost book rotation (was 10: at near-frontal angles thick books forced big gaps)
 const ANGLE_RAD      = ANGLE_MAX_DEG * Math.PI / 180; // used for stride calc
 const SLAB_DEPTH     = 0.013;   // glass card thickness (was 0.018, −30%) — also the spine of a book with no page count
-const CARD_RADIUS    = 0.006;   // rounded corners on the card geometry (world units)
-const CARD_SEGMENTS  = 3;       // smoothness of the rounding arcs
-const EXPOSE         = 0.34;    // was 0.42 — tighter packing (≈20% less stride)
+const EXPOSE         = 0.46;    // share of each cover left visible (was 0.34 for thin cards)
 const GAP            = 0.010;   // was 0.012
 const SCALE          = 1 / 300; // px → world units
 const CAM_Z          = 2.2;
+const CAM_Y          = 0.35;  // eye slightly above the books so the page-block tops show (camera aims at the origin)
 const CAM_FOV        = 50;
 const EDGE_ZONE      = 220;
 const MAX_EDGE_SPEED = 0.05;
@@ -34,7 +36,7 @@ const MAX_EDGE_SPEED = 0.05;
 const PAGES_MIN        = 40;      // shorter books get this spine (still readable)
 const PAGES_MAX        = 1000;    // longer books are capped here (doorstops don't eat the shelf)
 const PAGE_DEPTH_RATIO = 0.00033; // real paper ≈ 0.065 mm per page on a ~200 mm tall book
-const SPINE_SCALE      = 0.6;     // 1 = true-to-life proportion; lower = slimmer, calmer shelf
+const SPINE_SCALE      = 1.0;     // 1 = true-to-life proportion; lower = slimmer, calmer shelf
 const SPINE_CLEARANCE  = 0.004;   // min air between neighbouring slabs (world units)
 
 function spineDepth(pages: number | undefined, avgH: number): number {
@@ -135,29 +137,26 @@ function sampleEdgeColor(canvas: HTMLCanvasElement): THREE.Color {
       const i = (y * SW + x) * 4;
       if (data[i + 3] < 100) continue;
       const r = data[i] / 255, g = data[i + 1] / 255, b = data[i + 2] / 255;
-      const sat = (Math.max(r, g, b) - Math.min(r, g, b)) / (Math.max(r, g, b) || 1);
-      const w = sat * sat + 0.05; // saturation-weighted so art colours dominate over white/black
-      rS += r * w; gS += g * w; bS += b * w; wS += w;
+      // Plain average: the spine should match the cover's background, not its accents.
+      rS += r; gS += g; bS += b; wS += 1;
     }
   }
   const r = wS > 0 ? rS / wS : 0.72;
   const g = wS > 0 ? gS / wS : 0.68;
   const b = wS > 0 ? bS / wS : 0.63;
 
-  // Deepen slightly into "translucent plastic" range
-  const c = new THREE.Color(r, g, b);
+  // Sampled in sRGB; convert so the spine matches the printed cover under lighting.
+  // Only the extremes are pulled in, so a black or white cover keeps a spine
+  // that still shows its edge against the background.
+  const c = new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace);
   const hsl = { h: 0, s: 0, l: 0 };
   c.getHSL(hsl);
-  c.setHSL(
-    hsl.h,
-    Math.min(1, Math.max(0.15, hsl.s * 2.0)),
-    Math.max(0.25, Math.min(0.55, hsl.l * 0.82)),
-  );
+  c.setHSL(hsl.h, hsl.s, Math.max(0.04, Math.min(0.9, hsl.l)));
   return c;
 }
 
 // ── Core canvas processing ────────────────────────────────────────────────────
-// Shared by loadRoundedTexture (real-time, per BookMesh) and prewarmCovers
+// Shared by loadCoverTexture (real-time, per BookMesh) and prewarmCovers
 // (pre-load phase, before books mount).  Populates texCache + colorCache and
 // fires onDone when complete.  Safe to call outside a Three.js Canvas context.
 function processCoverUrl(
@@ -184,31 +183,7 @@ function processCoverUrl(
     const col = sampleEdgeColor(canvas);
     colorCache.set(url, col);
 
-    // ── Soft edge fade mask ───────────────────────────────────────────────
-    const FADE  = Math.round(Math.min(W, H) * 0.08);
-    const R     = Math.max(4, Math.round(W * 0.05));
-    const inset = Math.round(FADE * 0.55);
-
-    const mask  = document.createElement("canvas");
-    mask.width  = W; mask.height = H;
-    const mCtx  = mask.getContext("2d")!;
-    mCtx.filter = `blur(${FADE}px)`;
-    mCtx.fillStyle = "white";
-    const iW = W - inset * 2, iH = H - inset * 2;
-    const ir = Math.max(1, R - inset);
-    mCtx.beginPath();
-    mCtx.moveTo(inset + ir, inset);
-    mCtx.lineTo(inset + iW - ir, inset); mCtx.quadraticCurveTo(inset + iW, inset,  inset + iW, inset + ir);
-    mCtx.lineTo(inset + iW, inset + iH - ir); mCtx.quadraticCurveTo(inset + iW, inset + iH, inset + iW - ir, inset + iH);
-    mCtx.lineTo(inset + ir, inset + iH); mCtx.quadraticCurveTo(inset, inset + iH, inset, inset + iH - ir);
-    mCtx.lineTo(inset, inset + ir); mCtx.quadraticCurveTo(inset, inset, inset + ir, inset);
-    mCtx.closePath();
-    mCtx.fill();
-    mCtx.filter = "none";
-
-    ctx.globalCompositeOperation = "destination-in";
-    ctx.drawImage(mask, 0, 0);
-    ctx.globalCompositeOperation = "source-over";
+    // Covers are printed full-bleed on the book's front face (no edge fade).
 
     // ── Texture ───────────────────────────────────────────────────────────
     const tex = new THREE.CanvasTexture(canvas);
@@ -227,7 +202,7 @@ function processCoverUrl(
 }
 
 // Pre-warm texCache + colorCache for a list of proxied cover URLs.
-// Call this before books mount so loadRoundedTexture gets a synchronous cache
+// Call this before books mount so loadCoverTexture gets a synchronous cache
 // hit and every book's entrance animation runs with its cover already applied.
 // Returns a Promise that resolves when all textures are processed.
 export function prewarmCovers(urls: string[]): Promise<void> {
@@ -247,21 +222,17 @@ export function prewarmCovers(urls: string[]): Promise<void> {
 // Load cover texture and apply to materials — fast path when texCache is warm.
 // onReady fires once the texture (and glass tint) have been applied, signalling
 // that the book can start its entrance animation with cover already visible.
-function loadRoundedTexture(
+function loadCoverTexture(
   url: string,
-  coverMat: THREE.MeshStandardMaterial,
-  glassMat: THREE.MeshPhysicalMaterial,
+  mats: BookMaterials,
   maxAnisotropy: number,
   invalidate: () => void,
   onReady?: () => void,
 ) {
   const applyFromCache = () => {
-    coverMat.map = texCache.get(url)!;
-    coverMat.needsUpdate = true;
-    if (colorCache.has(url)) {
-      glassMat.color.copy(colorCache.get(url)!);
-      glassMat.needsUpdate = true;
-    }
+    mats.cover.map = texCache.get(url)!;
+    mats.cover.needsUpdate = true;
+    if (colorCache.has(url)) applyCoverColor(mats, colorCache.get(url)!);
     invalidate();
     onReady?.();
   };
@@ -283,13 +254,6 @@ function makeFallback(title: string): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = 256; canvas.height = 384;
   const ctx = canvas.getContext("2d")!;
-  const r = 5;
-  ctx.beginPath();
-  ctx.moveTo(r, 0); ctx.lineTo(256 - r, 0); ctx.quadraticCurveTo(256, 0, 256, r);
-  ctx.lineTo(256, 384 - r); ctx.quadraticCurveTo(256, 384, 256 - r, 384);
-  ctx.lineTo(r, 384); ctx.quadraticCurveTo(0, 384, 0, 384 - r);
-  ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0);
-  ctx.closePath(); ctx.clip();
   ctx.fillStyle = "#e4e0db"; ctx.fillRect(0, 0, 256, 384);
   ctx.fillStyle = "#a09993";
   ctx.font = "12px Georgia, serif";
@@ -312,44 +276,9 @@ function getOrMakeFallback(title: string): THREE.CanvasTexture {
   return fallbackCache.get(title) ?? makeFallback(title);
 }
 
-// ─── PS1-style frosted plastic — per-book, cover-colour derived ───────────────
-// The whole card is one uniform glass/plastic slab — like an SD card or
-// Game Boy cartridge.  Cover art is printed on the front as a separate thin
-// plane sitting flush against the glass face.  The glass tint is derived from
-// the cover image so the edge/spine colour always matches the artwork.
-
-const NEUTRAL_SPINE = new THREE.Color("#b4aca4"); // warm grey until cover loads
-
-// The card glass — fully opaque so books never bleed through each other.
-// The "glass" quality comes from the tinted colour + clearcoat specular, not
-// from see-through transparency.  Only the cover plane is transparent (edge fade).
-function makeBookGlass(): THREE.MeshPhysicalMaterial {
-  const col = NEUTRAL_SPINE.clone();
-  return new THREE.MeshPhysicalMaterial({
-    color:              col,
-    metalness:          0.05,
-    roughness:          0.22,
-    clearcoat:          0.55,
-    clearcoatRoughness: 0.12,
-    envMapIntensity:    1.0,
-    side:               THREE.FrontSide,
-    transparent:        true,  // needed for entrance opacity fade
-    opacity:            0,     // starts invisible; entrance tween drives this to 1
-  });
-}
-
-// Cover print — transparent so the alpha edge-fade bleeds into the glass
-function makeCoverMat(fallback: THREE.Texture): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
-    map:             fallback,
-    roughness:       0.12,
-    metalness:       0.0,
-    envMapIntensity: 0.3,
-    transparent:     true,   // needed for the soft edge fade alpha
-    opacity:         0,      // starts invisible; entrance tween drives both glass + cover to 1
-    alphaTest:       0.005,  // skip fully transparent pixels (perf + depth sorting)
-  });
-}
+// ─── Book materials ───────────────────────────────────────────────────────────
+// See src/lib/bookObject.ts: cover, spine, back and a page block (paper, or
+// frosted glass for Kindle/Digital reads), plus a soft contact shadow.
 
 // ─── Loading-state placeholder seed titles ────────────────────────────────────
 // Eight titles chosen so their heightVH hashes span the full height range.
@@ -369,6 +298,7 @@ interface BookLayout {
   id: string; title: string; author: string; genre: string; coverUrl?: string;
   w: number; h: number;
   d: number;    // slab depth = spine thickness (world units), from page count
+  digital: boolean; // Kindle/Digital read: page block rendered as glass, not paper
   x: number;    // layout-space center X (group handles viewport offset)
   rotY: number; // per-book Y rotation in radians (left = most, right = least)
 }
@@ -419,24 +349,22 @@ function BookMesh({
     return 0.13 * Math.pow(0.38, t); // 0.13 → ~0.049 across the row
   }, [index, totalBooks]);
 
-  // Per-book glass slab material — uniform across every face
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const glassMat = useMemo(() => makeBookGlass(), []);
-
-  // Cover "print" sitting on front face — getOrMakeFallback reuses a cached
-  // CanvasTexture so remounts from filter changes don't recreate the canvas.
-  const coverMat = useMemo(
-    () => makeCoverMat(getOrMakeFallback(layout.title)),
+  // Per-book materials (cover / spine / back / page block / shadow).
+  // getOrMakeFallback reuses a cached CanvasTexture so remounts from filter
+  // changes don't recreate the canvas.  Depth is fixed per book for its life.
+  const mats = useMemo(
+    () => createBookMaterials(getOrMakeFallback(layout.title), layout.d, layout.digital),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
+  const shadowRef = useRef<THREE.Mesh>(null);
 
   // Load real texture — texCache is pre-warmed by PageLoader so this is a
   // synchronous cache hit on first load: texture + glass tint applied immediately.
   useEffect(() => {
     if (!layout.coverUrl) return;
-    loadRoundedTexture(layout.coverUrl, coverMat, glassMat, maxAniso, invalidate);
-  }, [layout.coverUrl, coverMat, glassMat, maxAniso, invalidate]);
+    loadCoverTexture(layout.coverUrl, mats, maxAniso, invalidate);
+  }, [layout.coverUrl, mats, maxAniso, invalidate]);
 
   // Per-book entrance: fires once canEnter becomes true (loader has cleared).
   // Staggered delay builds the carousel left-to-right with textures pre-warmed,
@@ -460,8 +388,7 @@ function BookMesh({
   // kept alive — only the LRU eviction path disposes them.
   useEffect(() => {
     return () => {
-      glassMat.dispose();
-      coverMat.dispose();
+      disposeBookMaterials(mats);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -528,10 +455,7 @@ function BookMesh({
     if (ef !== prevEntranceFrac.current) {
       prevEntranceFrac.current = ef;
       moved = true;
-      glassMat.opacity = ef;
-      glassMat.needsUpdate = true;
-      coverMat.opacity = ef;
-      coverMat.needsUpdate = true;
+      setBookOpacity(mats, ef);
     }
 
     if (moved) {
@@ -555,15 +479,18 @@ function BookMesh({
       bookRef.current.rotation.y = layout.rotY * (1 - s); // lerps to frontal
       // entranceFracRef gates scale from 0→1 on mount (staggered per book).
       // After entrance, dismiss/select drive scale as before.
-      bookRef.current.scale.setScalar(
-        entranceFracRef.current * d * (1 + s * (mobileMode ? 0.30 : 0.10))
-      );
+      const scale = entranceFracRef.current * d * (1 + s * (mobileMode ? 0.30 : 0.10));
+      bookRef.current.scale.setScalar(scale);
+
+      // Contact shadow stays on the ground while the book lifts, and fades as
+      // it rises, enters, or is picked up into the centre.
+      if (shadowRef.current) {
+        shadowRef.current.position.y = -layout.h / 2 + 0.0005 - (scale > 1e-3 ? lift / scale : 0);
+        mats.shadow.opacity = SHADOW_OPACITY * ef * (1 - liftRef.current * 0.55) * (1 - s);
+      }
       invalidate();
     }
   });
-
-  const coverW   = layout.w - CARD_RADIUS * 2;
-  const coverH   = layout.h - CARD_RADIUS * 2;
 
   return (
     <group
@@ -581,21 +508,21 @@ function BookMesh({
         document.body.style.cursor = "default";
       }}
     >
-      {/* Glass card — rounded corners, uniform translucent plastic */}
-      <mesh material={glassMat}>
-        <RoundedBoxGeo
-          args={[layout.w, layout.h, layout.d]}
-          radius={CARD_RADIUS}
-          smoothness={CARD_SEGMENTS}
-        />
+      {/* The book: six faces, materials in BoxGeometry order (+x fore-edge,
+          −x spine, top, bottom, front cover, back) */}
+      <mesh material={mats.faces}>
+        <boxGeometry args={[layout.w, layout.h, layout.d]} />
       </mesh>
 
-      {/* Cover art — flat plane flush against front face */}
+      {/* Soft contact shadow on the ground, cast back and to the right */}
       <mesh
-        position={[0, 0, layout.d / 2 + 0.0001]}
-        material={coverMat}
+        ref={shadowRef}
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0.02, -layout.h / 2 + 0.0005, -0.06]}
+        material={mats.shadow}
+        raycast={() => null}
       >
-        <planeGeometry args={[coverW, coverH]} />
+        <planeGeometry args={[layout.w * 1.25, layout.d + 0.22]} />
       </mesh>
     </group>
   );
@@ -657,7 +584,9 @@ function ShelfScene({
 
   return (
     <>
-      <ambientLight intensity={1.1} />
+      <hemisphereLight args={[LIGHTS.hemi.sky, LIGHTS.hemi.ground, LIGHTS.hemi.intensity]} />
+      <directionalLight color={LIGHTS.key.color}  intensity={LIGHTS.key.intensity}  position={LIGHTS.key.position} />
+      <directionalLight color={LIGHTS.fill.color} intensity={LIGHTS.fill.intensity} position={LIGHTS.fill.position} />
       {/*
         Wrapper group — receives loading-mode scale + Y offset.
         useFrame applies the transform on every frame while animating,
@@ -813,7 +742,7 @@ export function ShelfView({
         const rotY = deg * Math.PI / 180;
         phResults.push({
           id: `ph-${i}`, title, author: "", genre: "",
-          w, h, d: SLAB_DEPTH, x: phCursor + w / 2, rotY,
+          w, h, d: SLAB_DEPTH, digital: false, x: phCursor + w / 2, rotY,
         });
         phCursor += phStride + GAP;
       });
@@ -871,6 +800,7 @@ export function ShelfView({
         genre:    book.genre,
         coverUrl: proxyCover(book.coverUrl),
         w, h, d,
+        digital: /^(digital|kindle)$/i.test(book.format ?? ""),
         x: cursor + w / 2,
         rotY,
       });
@@ -1076,12 +1006,14 @@ export function ShelfView({
     >
       <Canvas
         frameloop="demand"             /* only renders on invalidate() */
-        camera={{ position: [0, 0, CAM_Z], fov: CAM_FOV, near: 0.01, far: 50 }}
+        camera={{ position: [0, CAM_Y, CAM_Z], fov: CAM_FOV, near: 0.01, far: 50 }}
+        onCreated={({ camera }) => { camera.lookAt(0, 0, 0); camera.updateMatrixWorld(); }}
         dpr={[1, 1.5]}
         gl={{
           antialias:           true,
-          toneMapping:         THREE.ACESFilmicToneMapping,
-          toneMappingExposure: 1.1,
+          // Neutral keeps printed cover colours (ACES desaturated and greyed them)
+          toneMapping:         THREE.NeutralToneMapping,
+          toneMappingExposure: 1.0,
           powerPreference:     "high-performance",
         }}
         style={{ width: "100%", height: "100%" }}
