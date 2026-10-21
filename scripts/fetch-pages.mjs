@@ -144,63 +144,120 @@ async function fetchBooksWithoutPages() {
 }
 
 // ── Page-count sources ─────────────────────────────────────────────────────────
-// Each returns candidates: { pages, matched, authors }
+// Each returns { hits, error }. hits: [{ pages, matched, title, authors }].
+// error is a short reason when the source itself failed (rate limit, outage),
+// so a failed lookup is not mistaken for "this book has no page count".
 
 const sane = n => Number.isFinite(n) && n >= MIN_SANE_PAGES && n <= MAX_SANE_PAGES;
 
+// Main title only: drop subtitles after ":" "|" " - " " — ", and characters
+// that search engines treat as query syntax (a ":" made Open Library read
+// "Sapiens:" as a field name, so every subtitled book came back empty).
+function searchTitle(title) {
+  return title
+    .split(/\s*[:|]\s*|\s+[-–—]\s+/)[0]
+    .replace(/[+\-&!(){}\[\]^"~*?\\/]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// fetch with one retry on rate limits / server errors.
+async function fetchJson(url) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return { data: await res.json() };
+      if (attempt === 0 && (res.status === 429 || res.status >= 500)) {
+        await new Promise(r => setTimeout(r, 1500));
+        continue;
+      }
+      return { error: `HTTP ${res.status}` };
+    } catch (err) {
+      if (attempt === 0) { await new Promise(r => setTimeout(r, 1500)); continue; }
+      return { error: err.code ?? err.message };
+    }
+  }
+  return { error: "no response" };
+}
+
 async function tryOpenLibrary(title, author) {
-  try {
-    const params = new URLSearchParams({
-      title, limit: "5", fields: "title,author_name,number_of_pages_median",
+  const params = new URLSearchParams({
+    title: searchTitle(title), limit: "8",
+    fields: "title,author_name,author_alternative_name,number_of_pages_median",
+  });
+  if (author) params.set("author", author);
+  const { data, error } = await fetchJson(`https://openlibrary.org/search.json?${params}`);
+  if (error) return { hits: [], error };
+  const hits = (data.docs ?? [])
+    .filter(d => sane(d.number_of_pages_median))
+    .map(d => {
+      const authors = (d.author_name ?? []).join(", ");
+      return {
+        pages:   Math.round(d.number_of_pages_median),
+        title:   d.title ?? "",
+        matched: `${d.title ?? "?"}${authors ? " — " + authors : ""}`,
+        // Alternative names cover transliterations (Достоевский → Dostoyevsky).
+        authors: [authors, ...(d.author_alternative_name ?? [])].join(", "),
+      };
     });
-    if (author) params.set("author", author);
-    const res = await fetch(`https://openlibrary.org/search.json?${params}`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.docs ?? [])
-      .filter(d => sane(d.number_of_pages_median))
-      .map(d => {
-        const authors = (d.author_name ?? []).join(", ");
-        return {
-          pages:   Math.round(d.number_of_pages_median),
-          matched: `${d.title ?? "?"}${authors ? " — " + authors : ""}`,
-          authors,
-        };
-      });
-  } catch { return []; }
+  return { hits };
 }
 
 async function tryGoogleBooks(title, author) {
-  try {
-    const q   = encodeURIComponent(`intitle:${title}${author ? ` inauthor:${author}` : ""}`);
-    const res = await fetch(
-      `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=5&fields=items(volumeInfo/title,volumeInfo/authors,volumeInfo/pageCount)`,
-    );
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.items ?? [])
-      .map(item => item.volumeInfo ?? {})
-      .filter(info => sane(info.pageCount))
-      .map(info => {
-        const authors = (info.authors ?? []).join(", ");
-        return {
-          pages:   info.pageCount,
-          matched: `${info.title ?? "?"}${authors ? " — " + authors : ""}`,
-          authors,
-        };
-      });
-  } catch { return []; }
+  const q = encodeURIComponent(`intitle:${searchTitle(title)}${author ? ` inauthor:${author}` : ""}`);
+  const { data, error } = await fetchJson(
+    `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=8&fields=items(volumeInfo/title,volumeInfo/authors,volumeInfo/pageCount)`,
+  );
+  if (error) return { hits: [], error };
+  const hits = (data.items ?? [])
+    .map(item => item.volumeInfo ?? {})
+    .filter(info => sane(info.pageCount))
+    .map(info => {
+      const authors = (info.authors ?? []).join(", ");
+      return {
+        pages:   info.pageCount,
+        title:   info.title ?? "",
+        matched: `${info.title ?? "?"}${authors ? " — " + authors : ""}`,
+        authors,
+      };
+    });
+  return { hits };
 }
 
+// ── Title check ────────────────────────────────────────────────────────────────
+// The author check alone let through a SparkNotes guide ("The alchemist",
+// 83 p) and a Camus omnibus ("The plague", 680 p). So a result is also
+// rejected when it is a study guide, or when its main title has more than a
+// couple of words that are not in the Notion title (a collection or a
+// different book by the same author). A typo-level difference still passes:
+// "Go tell on the mountain" vs "Go Tell It on the Mountain" is 1 extra word.
+const NOT_THE_BOOK = /\b(sparknotes|cliffsnotes|cliff'?s notes|study guide|summary|analysis|workbook|reader'?s guide|companion|omnibus|collected|complete works|selected|boxed set|box set|trilogy|volume set)\b/i;
+const MAX_EXTRA_TITLE_WORDS = 2;
+
+function titleProblem(notionTitle, matchedTitle) {
+  if (NOT_THE_BOOK.test(matchedTitle) && !NOT_THE_BOOK.test(notionTitle)) return "a study guide or collection";
+  const want  = new Set(words(searchTitle(notionTitle)));
+  const extra = words(searchTitle(matchedTitle)).filter(w => !want.has(w));
+  return extra.length > MAX_EXTRA_TITLE_WORDS ? `a different title (+${extra.slice(0, 4).join(" ")}…)` : null;
+}
+
+// Try every candidate from Open Library, then Google Books; take the first one
+// whose author AND title both check out.
 async function findPages(book) {
   let firstRejected;
+  const errors = [];
   for (const [source, lookup] of [["OpenLib", tryOpenLibrary], ["Google", tryGoogleBooks]]) {
-    for (const hit of await lookup(book.title, book.author)) {
-      if (!book.author || authorMatches(book.author, hit.authors)) return { source, hit };
-      firstRejected ??= { source, hit };
+    const { hits, error } = await lookup(book.title, book.author);
+    if (error) errors.push(`${source} ${error}`);
+    for (const hit of hits) {
+      const authorOk = !book.author || authorMatches(book.author, hit.authors);
+      const problem  = authorOk ? titleProblem(book.title, hit.title) : "a different author";
+      if (!problem) return { source, hit };
+      firstRejected ??= { source, hit, problem };
     }
   }
-  return firstRejected ? { rejected: firstRejected } : undefined;
+  if (firstRejected) return { rejected: firstRejected };
+  return { errors };
 }
 
 async function patchPages(pageId, pages) {
@@ -250,23 +307,28 @@ async function main() {
   if (noAuthor.length) console.log("");
 
   const found = [];
-  let notFound = 0, review = 0, failed = 0;
+  let notFound = 0, review = 0, failed = 0, sourceErrors = 0;
 
-  const BATCH = 5;
+  const BATCH = 3; // Open Library rate-limits bursts; errors are retried once, then reported
   for (let i = 0; i < toSearch.length; i += BATCH) {
     await Promise.all(toSearch.slice(i, i + BATCH).map(async book => {
       const who    = book.author ? `Notion author: ${book.author}` : "no author in Notion";
       const result = await findPages(book);
 
-      if (!result) {
-        console.log(`  ⚠️  No page count found: ${book.title} (${book.author || "no author"})`);
-        notFound++;
+      if (result.rejected) {
+        const { source, hit, problem } = result.rejected;
+        console.log(`  🚫 Needs review, NOT saved: "${book.title}" (${who}) → [${source}] ${hit.pages} p, "${hit.matched}" — ${problem}`);
+        review++;
         return;
       }
-      if (result.rejected) {
-        const { source, hit } = result.rejected;
-        console.log(`  🚫 Needs review, NOT saved: "${book.title}" (${who}) → [${source}] ${hit.pages} p, "${hit.matched}", a different author`);
-        review++;
+      if (result.errors) {
+        if (result.errors.length) {
+          console.log(`  📡 Lookup failed, try again later: ${book.title} (${result.errors.join("; ")})`);
+          sourceErrors++;
+        } else {
+          console.log(`  ⚠️  No page count found: ${book.title} (${book.author || "no author"})`);
+          notFound++;
+        }
         return;
       }
 
@@ -287,10 +349,12 @@ async function main() {
         failed++;
       }
     }));
-    if (i + BATCH < toSearch.length) await new Promise(r => setTimeout(r, 300));
+    if (i + BATCH < toSearch.length) await new Promise(r => setTimeout(r, 500));
   }
 
-  const rest = `${notFound} not found, ${review} need review, ${noAuthor.length} skipped (no author)` +
+  const rest = `${notFound} not found, ${review} need review, ` +
+    (sourceErrors ? `${sourceErrors} lookups failed (run again later), ` : "") +
+    `${noAuthor.length} skipped (no author)` +
     (failed ? `, ${failed} failed to save` : "");
   console.log(DRY_RUN
     ? `\n🔎 Dry run done — ${found.length} would be saved, ${rest}. Nothing was written.`
